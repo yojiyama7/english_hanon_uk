@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { onDestroy, onMount } from 'svelte';
+
 	type AudioKind = 'single' | 'slow' | 'natural';
 
 	type Lesson = {
@@ -14,60 +16,210 @@
 		lessons: Lesson[];
 	};
 
-	const audioFiles = import.meta.glob('../../english_hanon_mp3/*.mp3', {
-		eager: true,
-		query: '?url',
-		import: 'default'
-	}) as Record<string, string>;
-
 	const filenamePattern = /^\d+_RP_Unit (\d+)\.(\d+)(?:_(slow|natural))?\.mp3$/;
-	const lessonMap = new Map<string, Lesson>();
+	const databaseName = 'english-hanon-audio';
+	const storeName = 'settings';
+	const directoryKey = 'audio-directory';
 
-	for (const [path, url] of Object.entries(audioFiles)) {
-		const filename = path.split('/').at(-1) ?? '';
-		const match = filename.match(filenamePattern);
+	type PermissionCapableDirectoryHandle = FileSystemDirectoryHandle & {
+		queryPermission: (options?: { mode?: 'read' | 'readwrite' }) => Promise<PermissionState>;
+		requestPermission: (options?: { mode?: 'read' | 'readwrite' }) => Promise<PermissionState>;
+		values: () => AsyncIterableIterator<FileSystemHandle>;
+	};
 
-		if (!match) {
-			throw new Error(`Unexpected audio filename: ${filename}`);
-		}
+	let units = $state<UnitGroup[]>([]);
+	let directoryHandle = $state<PermissionCapableDirectoryHandle | null>(null);
+	let folderName = $state('');
+	let phase = $state<'starting' | 'choose' | 'confirm' | 'loading' | 'ready' | 'error'>('starting');
+	let errorMessage = $state('');
+	let fallbackInput: HTMLInputElement;
+	let objectUrls: string[] = [];
 
-		const unit = Number(match[1]);
-		const item = Number(match[2]);
-		const kind = (match[3] ?? 'single') as AudioKind;
-		const key = `${unit}.${item}`;
-		const lesson = lessonMap.get(key) ?? { unit, item };
-
-		if (lesson[kind]) {
-			throw new Error(`Duplicate ${kind} audio for Unit ${key}`);
-		}
-
-		lesson[kind] = url;
-		lessonMap.set(key, lesson);
+	function openDatabase(): Promise<IDBDatabase> {
+		return new Promise((resolve, reject) => {
+			const request = indexedDB.open(databaseName, 1);
+			request.onupgradeneeded = () => {
+				if (!request.result.objectStoreNames.contains(storeName)) {
+					request.result.createObjectStore(storeName);
+				}
+			};
+			request.onsuccess = () => resolve(request.result);
+			request.onerror = () => reject(request.error);
+		});
 	}
 
-	for (const lesson of lessonMap.values()) {
-		const isComplete =
-			lesson.unit === 0
-				? Boolean(lesson.single && !lesson.slow && !lesson.natural)
-				: Boolean(!lesson.single && lesson.slow && lesson.natural);
+	async function getSavedDirectory(): Promise<PermissionCapableDirectoryHandle | null> {
+		const database = await openDatabase();
+		return new Promise((resolve, reject) => {
+			const request = database.transaction(storeName).objectStore(storeName).get(directoryKey);
+			request.onsuccess = () => {
+				database.close();
+				resolve((request.result as PermissionCapableDirectoryHandle | undefined) ?? null);
+			};
+			request.onerror = () => {
+				database.close();
+				reject(request.error);
+			};
+		});
+	}
 
-		if (!isComplete) {
-			throw new Error(`Incomplete audio set for Unit ${lesson.unit}.${lesson.item}`);
+	async function saveDirectory(handle: PermissionCapableDirectoryHandle): Promise<void> {
+		const database = await openDatabase();
+		await new Promise<void>((resolve, reject) => {
+			const transaction = database.transaction(storeName, 'readwrite');
+			transaction.objectStore(storeName).put(handle, directoryKey);
+			transaction.oncomplete = () => resolve();
+			transaction.onerror = () => reject(transaction.error);
+		});
+		database.close();
+	}
+
+	function releaseAudioUrls() {
+		for (const url of objectUrls) URL.revokeObjectURL(url);
+		objectUrls = [];
+	}
+
+	function buildUnits(files: File[]): UnitGroup[] {
+		const lessonMap = new Map<string, Lesson>();
+
+		for (const file of files) {
+			const match = file.name.match(filenamePattern);
+			if (!match) continue;
+
+			const unit = Number(match[1]);
+			const item = Number(match[2]);
+			const kind = (match[3] ?? 'single') as AudioKind;
+			const key = `${unit}.${item}`;
+			const lesson = lessonMap.get(key) ?? { unit, item };
+			if (lesson[kind]) throw new Error(`Unit ${key} の ${kind} 音声が重複しています。`);
+
+			const url = URL.createObjectURL(file);
+			objectUrls.push(url);
+			lesson[kind] = url;
+			lessonMap.set(key, lesson);
+		}
+
+		if (lessonMap.size === 0) {
+			throw new Error('対応するMP3ファイルが見つかりませんでした。別のフォルダを選択してください。');
+		}
+
+		for (const lesson of lessonMap.values()) {
+			const isComplete =
+				lesson.unit === 0
+					? Boolean(lesson.single && !lesson.slow && !lesson.natural)
+					: Boolean(!lesson.single && lesson.slow && lesson.natural);
+			if (!isComplete) {
+				throw new Error(`Unit ${lesson.unit}.${lesson.item} の音声ファイルが揃っていません。`);
+			}
+		}
+
+		const groupedUnits = new Map<number, Lesson[]>();
+		for (const lesson of lessonMap.values()) {
+			const lessons = groupedUnits.get(lesson.unit) ?? [];
+			lessons.push(lesson);
+			groupedUnits.set(lesson.unit, lessons);
+		}
+
+		return Array.from(groupedUnits, ([unit, lessons]) => ({
+			unit,
+			lessons: lessons.sort((a, b) => a.item - b.item)
+		})).sort((a, b) => a.unit - b.unit);
+	}
+
+	async function collectAudioFiles(handle: PermissionCapableDirectoryHandle): Promise<File[]> {
+		const files: File[] = [];
+		for await (const entry of handle.values()) {
+			if (entry.kind === 'file' && entry.name.toLowerCase().endsWith('.mp3')) {
+				files.push(await (entry as FileSystemFileHandle).getFile());
+			} else if (entry.kind === 'directory') {
+				files.push(...(await collectAudioFiles(entry as PermissionCapableDirectoryHandle)));
+			}
+		}
+		return files;
+	}
+
+	async function loadDirectory(handle: PermissionCapableDirectoryHandle) {
+		phase = 'loading';
+		errorMessage = '';
+		try {
+			let permission = await handle.queryPermission({ mode: 'read' });
+			if (permission !== 'granted') permission = await handle.requestPermission({ mode: 'read' });
+			if (permission !== 'granted') {
+				phase = 'confirm';
+				errorMessage = 'フォルダの読み取り許可が必要です。';
+				return;
+			}
+			releaseAudioUrls();
+			units = buildUnits(await collectAudioFiles(handle));
+			directoryHandle = handle;
+			folderName = handle.name;
+			phase = 'ready';
+		} catch (error) {
+			releaseAudioUrls();
+			units = [];
+			errorMessage = error instanceof Error ? error.message : 'フォルダを読み込めませんでした。';
+			phase = 'error';
 		}
 	}
 
-	const groupedUnits = new Map<number, Lesson[]>();
+	async function chooseDirectory() {
+		errorMessage = '';
+		const picker = (window as Window & {
+			showDirectoryPicker?: (options?: { mode?: 'read' }) => Promise<FileSystemDirectoryHandle>;
+		}).showDirectoryPicker;
 
-	for (const lesson of lessonMap.values()) {
-		const lessons = groupedUnits.get(lesson.unit) ?? [];
-		lessons.push(lesson);
-		groupedUnits.set(lesson.unit, lessons);
+		if (!picker) {
+			fallbackInput.click();
+			return;
+		}
+
+		try {
+			const handle = (await picker.call(window, { mode: 'read' })) as PermissionCapableDirectoryHandle;
+			await loadDirectory(handle);
+			if (phase === 'ready') await saveDirectory(handle).catch(() => undefined);
+		} catch (error) {
+			if (error instanceof DOMException && error.name === 'AbortError') return;
+			errorMessage = 'フォルダを選択できませんでした。もう一度お試しください。';
+			phase = 'error';
+		}
 	}
 
-	const units: UnitGroup[] = Array.from(groupedUnits, ([unit, lessons]) => ({
-		unit,
-		lessons: lessons.sort((a, b) => a.item - b.item)
-	})).sort((a, b) => a.unit - b.unit);
+	async function loadFallbackFiles(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const files = Array.from(input.files ?? []);
+		if (!files.length) return;
+		folderName = files[0].webkitRelativePath.split('/')[0] || '選択したフォルダ';
+		phase = 'loading';
+		try {
+			releaseAudioUrls();
+			units = buildUnits(files);
+			phase = 'ready';
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : 'フォルダを読み込めませんでした。';
+			phase = 'error';
+		}
+		input.value = '';
+	}
+
+	onMount(async () => {
+		if (!('showDirectoryPicker' in window)) {
+			phase = 'choose';
+			return;
+		}
+		try {
+			directoryHandle = await getSavedDirectory();
+			if (directoryHandle) {
+				folderName = directoryHandle.name;
+				phase = 'confirm';
+			} else {
+				phase = 'choose';
+			}
+		} catch {
+			phase = 'choose';
+		}
+	});
+
+	onDestroy(releaseAudioUrls);
 </script>
 
 <svelte:head>
@@ -77,67 +229,99 @@
 
 <main>
 	<header class="page-header">
-		<p class="eyebrow">Audio practice</p>
+		<div class="header-line">
+			<p class="eyebrow">Audio practice</p>
+			{#if phase === 'ready'}
+				<button class="folder-button" type="button" onclick={chooseDirectory}>
+					{folderName} · 変更
+				</button>
+			{/if}
+		</div>
 		<h1>English Hanon</h1>
 		<p class="introduction">Select a unit and play the track you want to practise.</p>
 	</header>
 
-	<section class="unit-list" aria-label="English Hanon audio units">
-		{#each units as group}
-			<details class="unit">
-				<summary>
-					<span class="unit-name">Unit {group.unit}</span>
-					<span class="item-count">{group.lessons.length} tracks</span>
-					<span class="chevron" aria-hidden="true"></span>
-				</summary>
+	{#if phase === 'ready'}
+		<section class="unit-list" aria-label="English Hanon audio units">
+			{#each units as group}
+				<details class="unit">
+					<summary>
+						<span class="unit-name">Unit {group.unit}</span>
+						<span class="item-count">{group.lessons.length} tracks</span>
+						<span class="chevron" aria-hidden="true"></span>
+					</summary>
 
-				<div class="lessons">
-					{#each group.lessons as lesson}
-						<div class:single-track={group.unit === 0} class="lesson-row">
-							<h2>{lesson.unit}.{lesson.item}</h2>
+					<div class="lessons">
+						{#each group.lessons as lesson}
+							<div class:single-track={group.unit === 0} class="lesson-row">
+								<h2>{lesson.unit}.{lesson.item}</h2>
 
-							{#if lesson.single}
-								<div class="player single-player">
-									<span>Audio</span>
-									<audio
-										controls
-										preload="none"
-										src={lesson.single}
-										aria-label={`Unit ${lesson.unit}.${lesson.item} audio`}
-									></audio>
-								</div>
-							{/if}
+								{#if lesson.single}
+									<div class="player single-player">
+										<span>Audio</span>
+										<audio controls preload="none" src={lesson.single} aria-label={`Unit ${lesson.unit}.${lesson.item} audio`}></audio>
+									</div>
+								{/if}
 
-							{#if lesson.slow}
-								<div class="player">
-									<span>Slow</span>
-									<audio
-										controls
-										preload="none"
-										src={lesson.slow}
-										aria-label={`Unit ${lesson.unit}.${lesson.item} slow audio`}
-									></audio>
-								</div>
-							{/if}
+								{#if lesson.slow}
+									<div class="player">
+										<span>Slow</span>
+										<audio controls preload="none" src={lesson.slow} aria-label={`Unit ${lesson.unit}.${lesson.item} slow audio`}></audio>
+									</div>
+								{/if}
 
-							{#if lesson.natural}
-								<div class="player">
-									<span>Natural</span>
-									<audio
-										controls
-										preload="none"
-										src={lesson.natural}
-										aria-label={`Unit ${lesson.unit}.${lesson.item} natural audio`}
-									></audio>
-								</div>
-							{/if}
-						</div>
-					{/each}
-				</div>
-			</details>
-		{/each}
-	</section>
+								{#if lesson.natural}
+									<div class="player">
+										<span>Natural</span>
+										<audio controls preload="none" src={lesson.natural} aria-label={`Unit ${lesson.unit}.${lesson.item} natural audio`}></audio>
+									</div>
+								{/if}
+							</div>
+						{/each}
+					</div>
+				</details>
+			{/each}
+		</section>
+	{/if}
 </main>
+
+<input
+	class="fallback-input"
+	type="file"
+	accept="audio/mpeg,.mp3"
+	multiple
+	webkitdirectory={true}
+	bind:this={fallbackInput}
+	onchange={loadFallbackFiles}
+/>
+
+{#if phase !== 'ready'}
+	<div class="folder-dialog-backdrop">
+		<div class="folder-dialog" role="dialog" aria-modal="true" aria-labelledby="folder-title">
+			<p class="dialog-eyebrow">Audio source</p>
+			{#if phase === 'starting'}
+				<h2 id="folder-title">保存したフォルダを確認中…</h2>
+			{:else if phase === 'confirm'}
+				<h2 id="folder-title">このフォルダでいいですか？</h2>
+				<p class="folder-name">{folderName}</p>
+				<p class="dialog-copy">前回選択したフォルダから音声を読み込みます。</p>
+				{#if errorMessage}<p class="error-message">{errorMessage}</p>{/if}
+				<div class="dialog-actions">
+					<button class="primary-action" type="button" onclick={() => directoryHandle && loadDirectory(directoryHandle)}>このフォルダを使う</button>
+					<button class="secondary-action" type="button" onclick={chooseDirectory}>別のフォルダを選ぶ</button>
+				</div>
+			{:else if phase === 'loading'}
+				<h2 id="folder-title">音声を読み込んでいます…</h2>
+				<p class="dialog-copy">フォルダ内のMP3ファイルを準備しています。</p>
+			{:else}
+				<h2 id="folder-title">音声フォルダを選択してください</h2>
+				<p class="dialog-copy">MP3ファイルはブラウザ内でのみ読み込みます。外部には送信されません。</p>
+				{#if errorMessage}<p class="error-message">{errorMessage}</p>{/if}
+				<button class="primary-action" type="button" onclick={chooseDirectory}>フォルダを選択</button>
+			{/if}
+		</div>
+	</div>
+{/if}
 
 <style>
 	:global(*) {
@@ -165,12 +349,39 @@
 		margin-bottom: 56px;
 	}
 
+	.header-line {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 24px;
+		margin-bottom: 12px;
+	}
+
 	.eyebrow {
-		margin: 0 0 12px;
+		margin: 0;
 		font-size: 0.72rem;
 		font-weight: 700;
 		letter-spacing: 0.18em;
 		text-transform: uppercase;
+	}
+
+	.folder-button {
+		max-width: min(50vw, 360px);
+		padding: 6px 0;
+		overflow: hidden;
+		border: 0;
+		background: transparent;
+		color: #555;
+		font: inherit;
+		font-size: 0.78rem;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+
+	.folder-button:hover {
+		color: #111;
+		text-decoration: underline;
 	}
 
 	h1 {
@@ -294,6 +505,113 @@
 		height: 38px;
 	}
 
+	.fallback-input {
+		display: none;
+	}
+
+	.folder-dialog-backdrop {
+		position: fixed;
+		z-index: 10;
+		inset: 0;
+		display: grid;
+		place-items: center;
+		padding: 24px;
+		background: rgb(255 255 255 / 88%);
+		backdrop-filter: blur(8px);
+	}
+
+	.folder-dialog {
+		width: min(100%, 520px);
+		padding: 42px;
+		border: 1px solid #111;
+		background: #fff;
+		box-shadow: 12px 12px 0 #111;
+	}
+
+	.dialog-eyebrow {
+		margin: 0 0 18px;
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.18em;
+		text-transform: uppercase;
+	}
+
+	.folder-dialog h2 {
+		margin: 0;
+		font-size: clamp(1.6rem, 5vw, 2.25rem);
+		font-weight: 550;
+		letter-spacing: -0.04em;
+		line-height: 1.2;
+	}
+
+	.folder-name {
+		margin: 24px 0 0;
+		padding: 14px 16px;
+		overflow: hidden;
+		border: 1px solid #bbb;
+		font-weight: 650;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.dialog-copy,
+	.error-message {
+		margin: 18px 0 0;
+		color: #555;
+		font-size: 0.88rem;
+		line-height: 1.7;
+	}
+
+	.error-message {
+		color: #a12618;
+	}
+
+	.dialog-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+		margin-top: 28px;
+	}
+
+	.primary-action,
+	.secondary-action {
+		min-height: 46px;
+		padding: 0 18px;
+		border: 1px solid #111;
+		font: inherit;
+		font-size: 0.84rem;
+		font-weight: 650;
+		cursor: pointer;
+	}
+
+	.primary-action {
+		margin-top: 28px;
+		background: #111;
+		color: #fff;
+	}
+
+	.dialog-actions .primary-action {
+		margin-top: 0;
+	}
+
+	.secondary-action {
+		background: #fff;
+		color: #111;
+	}
+
+	.primary-action:hover {
+		background: #333;
+	}
+
+	.secondary-action:hover {
+		background: #f2f2f2;
+	}
+
+	button:focus-visible {
+		outline: 2px solid #2864dc;
+		outline-offset: 3px;
+	}
+
 	@media (max-width: 760px) {
 		main {
 			width: min(100% - 28px, 1120px);
@@ -302,6 +620,15 @@
 
 		.page-header {
 			margin-bottom: 40px;
+		}
+
+		.folder-dialog {
+			padding: 30px 24px;
+			box-shadow: 8px 8px 0 #111;
+		}
+
+		.dialog-actions {
+			flex-direction: column;
 		}
 
 		summary {
