@@ -49,6 +49,7 @@
 	let pinErrors = $state<Record<string, string>>({});
 	let pinTimeSaveVersions: Record<string, number> = {};
 	let playbackTimes = $state<Record<string, { current: number; duration: number }>>({});
+	let lastUsedAudio: HTMLAudioElement | null = null;
 	let adjustmentStates = $state<
 		Record<string, { busy: boolean; message: string; hasError: boolean }>
 	>({});
@@ -95,6 +96,7 @@
 	}
 
 	function releaseAudioUrls() {
+		lastUsedAudio = null;
 		for (const url of objectUrls) URL.revokeObjectURL(url);
 		objectUrls = [];
 		audioEnvelopeCache.clear();
@@ -165,6 +167,23 @@
 			current: audio.currentTime,
 			duration: audio.duration
 		};
+	}
+
+	function rememberAudio(event: Event) {
+		const audio = event.currentTarget;
+		if (audio instanceof HTMLAudioElement) lastUsedAudio = audio;
+	}
+
+	function toggleLastUsedAudio(event: KeyboardEvent) {
+		if (event.code !== 'Space') return;
+		event.preventDefault();
+		if (event.repeat || !lastUsedAudio) return;
+
+		if (lastUsedAudio.paused) {
+			void lastUsedAudio.play().catch(() => undefined);
+		} else {
+			lastUsedAudio.pause();
+		}
 	}
 
 	async function jumpToPin(event: MouseEvent, pin: AudioPin) {
@@ -468,6 +487,8 @@
 	onDestroy(releaseAudioUrls);
 </script>
 
+<svelte:window onkeydown={toggleLastUsedAudio} />
+
 {#snippet audioPlayer(label: string, track: PlayableTrack, ariaLabel: string)}
 	<div class="player">
 		<span>{label}</span>
@@ -480,6 +501,8 @@
 			ondurationchange={(event) => updatePlaybackTime(event, track.filename)}
 			ontimeupdate={(event) => updatePlaybackTime(event, track.filename)}
 			onseeking={(event) => updatePlaybackTime(event, track.filename)}
+			onplay={rememberAudio}
+			onpause={rememberAudio}
 		></audio>
 		<output class="playback-time" aria-label={`${ariaLabel} playback time`}>
 			{formatPlaybackTime(playbackTimes[track.filename]?.current ?? 0)} / {formatPlaybackTime(
