@@ -1,14 +1,12 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-
-	type AudioKind = 'single' | 'slow' | 'natural';
+	import { audioCatalog, type AudioKind, type AudioPin } from '$lib/audio-catalog';
 
 	type Lesson = {
+		title: string;
 		unit: number;
-		item: number;
-		single?: string;
-		slow?: string;
-		natural?: string;
+		section: number;
+		tracks: Partial<Record<AudioKind, { url: string; pins: AudioPin[] }>>;
 	};
 
 	type UnitGroup = {
@@ -16,7 +14,6 @@
 		lessons: Lesson[];
 	};
 
-	const filenamePattern = /^\d+_RP_Unit (\d+)\.(\d+)(?:_(slow|natural))?\.mp3$/;
 	const databaseName = 'english-hanon-audio';
 	const storeName = 'settings';
 	const directoryKey = 'audio-directory';
@@ -80,50 +77,57 @@
 	}
 
 	function buildUnits(files: File[]): UnitGroup[] {
-		const lessonMap = new Map<string, Lesson>();
-
+		const filesByName = new Map<string, File>();
 		for (const file of files) {
-			const match = file.name.match(filenamePattern);
-			if (!match) continue;
-
-			const unit = Number(match[1]);
-			const item = Number(match[2]);
-			const kind = (match[3] ?? 'single') as AudioKind;
-			const key = `${unit}.${item}`;
-			const lesson = lessonMap.get(key) ?? { unit, item };
-			if (lesson[kind]) throw new Error(`Unit ${key} の ${kind} 音声が重複しています。`);
-
-			const url = URL.createObjectURL(file);
-			objectUrls.push(url);
-			lesson[kind] = url;
-			lessonMap.set(key, lesson);
-		}
-
-		if (lessonMap.size === 0) {
-			throw new Error('対応するMP3ファイルが見つかりませんでした。別のフォルダを選択してください。');
-		}
-
-		for (const lesson of lessonMap.values()) {
-			const isComplete =
-				lesson.unit === 0
-					? Boolean(lesson.single && !lesson.slow && !lesson.natural)
-					: Boolean(!lesson.single && lesson.slow && lesson.natural);
-			if (!isComplete) {
-				throw new Error(`Unit ${lesson.unit}.${lesson.item} の音声ファイルが揃っていません。`);
+			if (filesByName.has(file.name)) {
+				throw new Error(`同名の音声ファイルが複数あります: ${file.name}`);
 			}
+			filesByName.set(file.name, file);
 		}
 
-		const groupedUnits = new Map<number, Lesson[]>();
-		for (const lesson of lessonMap.values()) {
-			const lessons = groupedUnits.get(lesson.unit) ?? [];
-			lessons.push(lesson);
-			groupedUnits.set(lesson.unit, lessons);
+		const missingFiles = audioCatalog.flatMap((group) =>
+			group.lessons.flatMap((lesson) =>
+				lesson.tracks.filter((track) => !filesByName.has(track.filename)).map((track) => track.filename)
+			)
+		);
+		if (missingFiles.length > 0) {
+			const remainder = missingFiles.length - 1;
+			throw new Error(
+				`必要な音声ファイルが見つかりません: ${missingFiles[0]}${remainder > 0 ? `（ほか${remainder}件）` : ''}`
+			);
 		}
 
-		return Array.from(groupedUnits, ([unit, lessons]) => ({
-			unit,
-			lessons: lessons.sort((a, b) => a.item - b.item)
-		})).sort((a, b) => a.unit - b.unit);
+		return audioCatalog.map((group) => ({
+			unit: group.unit,
+			lessons: group.lessons.map((lesson) => ({
+				title: lesson.title,
+				unit: lesson.unit,
+				section: lesson.section,
+				tracks: Object.fromEntries(
+					lesson.tracks.map((track) => {
+						const url = URL.createObjectURL(filesByName.get(track.filename)!);
+						objectUrls.push(url);
+						return [track.kind, { url, pins: track.pins }];
+					})
+				) as Lesson['tracks']
+			}))
+		}));
+	}
+
+	function formatPinTime(atSeconds: number): string {
+		const deciseconds = Math.round(atSeconds * 10);
+		const minutes = Math.floor(deciseconds / 600);
+		const seconds = Math.floor(deciseconds / 10) % 60;
+		const tenths = deciseconds % 10;
+		return `${minutes}:${String(seconds).padStart(2, '0')}.${tenths}`;
+	}
+
+	async function jumpToPin(event: MouseEvent, pin: AudioPin) {
+		const player = (event.currentTarget as HTMLElement).closest('.player');
+		const audio = player?.querySelector('audio');
+		if (!audio) return;
+		audio.currentTime = pin.atSeconds;
+		await audio.play().catch(() => undefined);
 	}
 
 	async function collectAudioFiles(handle: PermissionCapableDirectoryHandle): Promise<File[]> {
@@ -254,26 +258,56 @@
 					<div class="lessons">
 						{#each group.lessons as lesson}
 							<div class:single-track={group.unit === 0} class="lesson-row">
-								<h2>{lesson.unit}.{lesson.item}</h2>
+								<h2>{lesson.title}</h2>
 
-								{#if lesson.single}
+								{#if lesson.tracks.single}
 									<div class="player single-player">
 										<span>Audio</span>
-										<audio controls preload="none" src={lesson.single} aria-label={`Unit ${lesson.unit}.${lesson.item} audio`}></audio>
+										<audio controls preload="none" src={lesson.tracks.single.url} aria-label={`${lesson.title} audio`}></audio>
+										{#if lesson.tracks.single.pins.length > 0}
+											<div class="pins" aria-label={`${lesson.title} audio markers`}>
+												{#each lesson.tracks.single.pins as pin}
+													<button type="button" onclick={(event) => jumpToPin(event, pin)}>
+														<span class="pin-time">{formatPinTime(pin.atSeconds)}</span>
+														{pin.label}
+													</button>
+												{/each}
+											</div>
+										{/if}
 									</div>
 								{/if}
 
-								{#if lesson.slow}
+								{#if lesson.tracks.slow}
 									<div class="player">
 										<span>Slow</span>
-										<audio controls preload="none" src={lesson.slow} aria-label={`Unit ${lesson.unit}.${lesson.item} slow audio`}></audio>
+										<audio controls preload="none" src={lesson.tracks.slow.url} aria-label={`${lesson.title} slow audio`}></audio>
+										{#if lesson.tracks.slow.pins.length > 0}
+											<div class="pins" aria-label={`${lesson.title} slow markers`}>
+												{#each lesson.tracks.slow.pins as pin}
+													<button type="button" onclick={(event) => jumpToPin(event, pin)}>
+														<span class="pin-time">{formatPinTime(pin.atSeconds)}</span>
+														{pin.label}
+													</button>
+												{/each}
+											</div>
+										{/if}
 									</div>
 								{/if}
 
-								{#if lesson.natural}
+								{#if lesson.tracks.natural}
 									<div class="player">
 										<span>Natural</span>
-										<audio controls preload="none" src={lesson.natural} aria-label={`Unit ${lesson.unit}.${lesson.item} natural audio`}></audio>
+										<audio controls preload="none" src={lesson.tracks.natural.url} aria-label={`${lesson.title} natural audio`}></audio>
+										{#if lesson.tracks.natural.pins.length > 0}
+											<div class="pins" aria-label={`${lesson.title} natural markers`}>
+												{#each lesson.tracks.natural.pins as pin}
+													<button type="button" onclick={(event) => jumpToPin(event, pin)}>
+														<span class="pin-time">{formatPinTime(pin.atSeconds)}</span>
+														{pin.label}
+													</button>
+												{/each}
+											</div>
+										{/if}
 									</div>
 								{/if}
 							</div>
@@ -498,6 +532,38 @@
 		text-transform: uppercase;
 	}
 
+	.pins {
+		display: flex;
+		grid-column: 2;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+
+	.pins button {
+		padding: 6px 9px;
+		border: 1px solid #c8c8c8;
+		border-radius: 999px;
+		background: #fff;
+		color: #222;
+		font: inherit;
+		font-size: 0.72rem;
+		cursor: pointer;
+	}
+
+	.pins button:hover {
+		border-color: #111;
+		background: #f5f5f5;
+	}
+
+	.pins .pin-time {
+		margin-right: 5px;
+		color: #666;
+		font-size: inherit;
+		font-variant-numeric: tabular-nums;
+		letter-spacing: 0;
+		text-transform: none;
+	}
+
 	audio {
 		display: block;
 		width: 100%;
@@ -650,6 +716,10 @@
 
 		.player span {
 			padding-left: 2px;
+		}
+
+		.pins {
+			grid-column: 1;
 		}
 	}
 
