@@ -41,6 +41,7 @@
 	let pinDrafts = $state<Record<string, string>>({});
 	let pinSaveStates = $state<Record<string, 'idle' | 'saving' | 'error'>>({});
 	let pinErrors = $state<Record<string, string>>({});
+	let playbackTimes = $state<Record<string, { current: number; duration: number }>>({});
 	const isDevelopment = import.meta.env.DEV;
 
 	function openDatabase(): Promise<IDBDatabase> {
@@ -138,6 +139,20 @@
 		const seconds = Math.floor(deciseconds / 10) % 60;
 		const tenths = deciseconds % 10;
 		return `${minutes}:${String(seconds).padStart(2, '0')}.${tenths}`;
+	}
+
+	function formatPlaybackTime(secondsValue: number | undefined): string {
+		if (secondsValue === undefined || !Number.isFinite(secondsValue)) return '--:--.-';
+		return formatPinTime(Math.max(0, secondsValue));
+	}
+
+	function updatePlaybackTime(event: Event, filename: string) {
+		const audio = event.currentTarget;
+		if (!(audio instanceof HTMLAudioElement)) return;
+		playbackTimes[filename] = {
+			current: audio.currentTime,
+			duration: audio.duration
+		};
 	}
 
 	async function jumpToPin(event: MouseEvent, pin: AudioPin) {
@@ -311,7 +326,21 @@
 {#snippet audioPlayer(label: string, track: PlayableTrack, ariaLabel: string)}
 	<div class="player">
 		<span>{label}</span>
-		<audio controls preload="none" src={track.url} aria-label={ariaLabel}></audio>
+		<audio
+			controls
+			preload="metadata"
+			src={track.url}
+			aria-label={ariaLabel}
+			onloadedmetadata={(event) => updatePlaybackTime(event, track.filename)}
+			ondurationchange={(event) => updatePlaybackTime(event, track.filename)}
+			ontimeupdate={(event) => updatePlaybackTime(event, track.filename)}
+			onseeking={(event) => updatePlaybackTime(event, track.filename)}
+		></audio>
+		<output class="playback-time" aria-label={`${ariaLabel} playback time`}>
+			{formatPlaybackTime(playbackTimes[track.filename]?.current ?? 0)} / {formatPlaybackTime(
+				playbackTimes[track.filename]?.duration
+			)}
+		</output>
 		{#if track.pins.length > 0}
 			<div class="pins" aria-label={`${ariaLabel} markers`}>
 				{#each track.pins as pin}
@@ -633,6 +662,15 @@
 		text-transform: uppercase;
 	}
 
+	.playback-time {
+		grid-column: 2;
+		margin-top: -7px;
+		color: #555;
+		font-size: 0.72rem;
+		font-variant-numeric: tabular-nums;
+		letter-spacing: 0.02em;
+	}
+
 	.pins {
 		display: flex;
 		grid-column: 2;
@@ -922,6 +960,7 @@
 			padding-left: 2px;
 		}
 
+		.playback-time,
 		.pins,
 		.pin-editor {
 			grid-column: 1;
