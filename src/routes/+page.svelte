@@ -487,7 +487,7 @@
 	onDestroy(releaseAudioUrls);
 </script>
 
-<svelte:window onkeydown={toggleLastUsedAudio} />
+<svelte:window onkeydowncapture={toggleLastUsedAudio} />
 
 {#snippet audioPlayer(label: string, track: PlayableTrack, ariaLabel: string)}
 	<div class="player">
@@ -501,6 +501,7 @@
 			ondurationchange={(event) => updatePlaybackTime(event, track.filename)}
 			ontimeupdate={(event) => updatePlaybackTime(event, track.filename)}
 			onseeking={(event) => updatePlaybackTime(event, track.filename)}
+			onpointerdown={rememberAudio}
 			onplay={rememberAudio}
 			onpause={rememberAudio}
 		></audio>
