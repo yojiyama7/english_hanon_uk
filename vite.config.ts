@@ -6,7 +6,9 @@ export default defineConfig({
 	server: {
 		fs: {
 			allow: [searchForWorkspaceRoot(new URL('.', import.meta.url).pathname)]
-		}
+		},
+		// Pins are updated through the development editor without forcing a page reload.
+		watch: { ignored: ['**/src/lib/audio-pins.json'] }
 	},
 	plugins: [
 		sveltekit({

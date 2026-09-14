@@ -2,11 +2,17 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { audioCatalog, type AudioKind, type AudioPin } from '$lib/audio-catalog';
 
+	type PlayableTrack = {
+		url: string;
+		filename: string;
+		pins: AudioPin[];
+	};
+
 	type Lesson = {
 		title: string;
 		unit: number;
 		section: number;
-		tracks: Partial<Record<AudioKind, { url: string; pins: AudioPin[] }>>;
+		tracks: Partial<Record<AudioKind, PlayableTrack>>;
 	};
 
 	type UnitGroup = {
@@ -31,6 +37,11 @@
 	let errorMessage = $state('');
 	let fallbackInput: HTMLInputElement;
 	let objectUrls: string[] = [];
+	let developmentPins = $state<Record<string, AudioPin[]>>({});
+	let pinDrafts = $state<Record<string, string>>({});
+	let pinSaveStates = $state<Record<string, 'idle' | 'saving' | 'error'>>({});
+	let pinErrors = $state<Record<string, string>>({});
+	const isDevelopment = import.meta.env.DEV;
 
 	function openDatabase(): Promise<IDBDatabase> {
 		return new Promise((resolve, reject) => {
@@ -107,7 +118,14 @@
 					lesson.tracks.map((track) => {
 						const url = URL.createObjectURL(filesByName.get(track.filename)!);
 						objectUrls.push(url);
-						return [track.kind, { url, pins: track.pins }];
+						return [
+							track.kind,
+							{
+								url,
+								filename: track.filename,
+								pins: developmentPins[track.filename] ?? track.pins
+							}
+						];
 					})
 				) as Lesson['tracks']
 			}))
@@ -128,6 +146,39 @@
 		if (!audio) return;
 		audio.currentTime = pin.atSeconds;
 		await audio.play().catch(() => undefined);
+	}
+
+	async function addPin(event: SubmitEvent, track: PlayableTrack) {
+		event.preventDefault();
+		const audio = (event.currentTarget as HTMLElement).closest('.player')?.querySelector('audio');
+		const label = pinDrafts[track.filename]?.trim();
+		if (!audio || !label) return;
+
+		const atSeconds = Math.round(audio.currentTime * 10) / 10;
+		pinSaveStates[track.filename] = 'saving';
+		pinErrors[track.filename] = '';
+		try {
+			const response = await fetch('/api/pins', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ filename: track.filename, atSeconds, label })
+			});
+			if (!response.ok) throw new Error(await response.text());
+			const result = (await response.json()) as { pins: AudioPin[] };
+			track.pins = result.pins;
+			developmentPins[track.filename] = result.pins;
+			pinDrafts[track.filename] = '';
+			pinSaveStates[track.filename] = 'idle';
+		} catch {
+			pinSaveStates[track.filename] = 'error';
+			pinErrors[track.filename] = 'ピンを保存できませんでした。';
+		}
+	}
+
+	async function loadDevelopmentPins() {
+		if (!isDevelopment) return;
+		const response = await fetch('/api/pins');
+		if (response.ok) developmentPins = (await response.json()) as Record<string, AudioPin[]>;
 	}
 
 	async function collectAudioFiles(handle: PermissionCapableDirectoryHandle): Promise<File[]> {
@@ -206,6 +257,7 @@
 	}
 
 	onMount(async () => {
+		await loadDevelopmentPins().catch(() => undefined);
 		if (!('showDirectoryPicker' in window)) {
 			phase = 'choose';
 			return;
@@ -225,6 +277,43 @@
 
 	onDestroy(releaseAudioUrls);
 </script>
+
+{#snippet audioPlayer(label: string, track: PlayableTrack, ariaLabel: string)}
+	<div class="player">
+		<span>{label}</span>
+		<audio controls preload="none" src={track.url} aria-label={ariaLabel}></audio>
+		{#if track.pins.length > 0}
+			<div class="pins" aria-label={`${ariaLabel} markers`}>
+				{#each track.pins as pin}
+					<button type="button" onclick={(event) => jumpToPin(event, pin)}>
+						<span class="pin-time">{formatPinTime(pin.atSeconds)}</span>
+						{pin.label}
+					</button>
+				{/each}
+			</div>
+		{/if}
+		{#if isDevelopment}
+			<form class="pin-editor" onsubmit={(event) => addPin(event, track)}>
+				<input
+					type="text"
+					maxlength="100"
+					placeholder="ピンのラベル"
+					aria-label={`${ariaLabel} pin label`}
+					bind:value={pinDrafts[track.filename]}
+				/>
+				<button
+					type="submit"
+					disabled={!pinDrafts[track.filename]?.trim() || pinSaveStates[track.filename] === 'saving'}
+				>
+					{pinSaveStates[track.filename] === 'saving' ? '保存中…' : '現在位置にピン'}
+				</button>
+				{#if pinErrors[track.filename]}
+					<p class="pin-error" aria-live="polite">{pinErrors[track.filename]}</p>
+				{/if}
+			</form>
+		{/if}
+	</div>
+{/snippet}
 
 <svelte:head>
 	<title>English Hanon Audio</title>
@@ -261,54 +350,15 @@
 								<h2>{lesson.title}</h2>
 
 								{#if lesson.tracks.single}
-									<div class="player single-player">
-										<span>Audio</span>
-										<audio controls preload="none" src={lesson.tracks.single.url} aria-label={`${lesson.title} audio`}></audio>
-										{#if lesson.tracks.single.pins.length > 0}
-											<div class="pins" aria-label={`${lesson.title} audio markers`}>
-												{#each lesson.tracks.single.pins as pin}
-													<button type="button" onclick={(event) => jumpToPin(event, pin)}>
-														<span class="pin-time">{formatPinTime(pin.atSeconds)}</span>
-														{pin.label}
-													</button>
-												{/each}
-											</div>
-										{/if}
-									</div>
+									{@render audioPlayer('Audio', lesson.tracks.single, `${lesson.title} audio`)}
 								{/if}
 
 								{#if lesson.tracks.slow}
-									<div class="player">
-										<span>Slow</span>
-										<audio controls preload="none" src={lesson.tracks.slow.url} aria-label={`${lesson.title} slow audio`}></audio>
-										{#if lesson.tracks.slow.pins.length > 0}
-											<div class="pins" aria-label={`${lesson.title} slow markers`}>
-												{#each lesson.tracks.slow.pins as pin}
-													<button type="button" onclick={(event) => jumpToPin(event, pin)}>
-														<span class="pin-time">{formatPinTime(pin.atSeconds)}</span>
-														{pin.label}
-													</button>
-												{/each}
-											</div>
-										{/if}
-									</div>
+									{@render audioPlayer('Slow', lesson.tracks.slow, `${lesson.title} slow audio`)}
 								{/if}
 
 								{#if lesson.tracks.natural}
-									<div class="player">
-										<span>Natural</span>
-										<audio controls preload="none" src={lesson.tracks.natural.url} aria-label={`${lesson.title} natural audio`}></audio>
-										{#if lesson.tracks.natural.pins.length > 0}
-											<div class="pins" aria-label={`${lesson.title} natural markers`}>
-												{#each lesson.tracks.natural.pins as pin}
-													<button type="button" onclick={(event) => jumpToPin(event, pin)}>
-														<span class="pin-time">{formatPinTime(pin.atSeconds)}</span>
-														{pin.label}
-													</button>
-												{/each}
-											</div>
-										{/if}
-									</div>
+									{@render audioPlayer('Natural', lesson.tracks.natural, `${lesson.title} natural audio`)}
 								{/if}
 							</div>
 						{/each}
@@ -564,6 +614,49 @@
 		text-transform: none;
 	}
 
+	.pin-editor {
+		display: grid;
+		grid-column: 2;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 6px;
+	}
+
+	.pin-editor input,
+	.pin-editor button {
+		min-height: 34px;
+		border: 1px solid #bbb;
+		background: #fff;
+		font: inherit;
+		font-size: 0.76rem;
+	}
+
+	.pin-editor input {
+		min-width: 0;
+		padding: 0 10px;
+	}
+
+	.pin-editor button {
+		padding: 0 11px;
+		border-color: #111;
+		background: #111;
+		color: #fff;
+		font-weight: 650;
+		cursor: pointer;
+	}
+
+	.pin-editor button:disabled {
+		border-color: #aaa;
+		background: #aaa;
+		cursor: default;
+	}
+
+	.pin-error {
+		grid-column: 1 / -1;
+		margin: 0;
+		color: #a12618;
+		font-size: 0.72rem;
+	}
+
 	audio {
 		display: block;
 		width: 100%;
@@ -718,7 +811,8 @@
 			padding-left: 2px;
 		}
 
-		.pins {
+		.pins,
+		.pin-editor {
 			grid-column: 1;
 		}
 	}

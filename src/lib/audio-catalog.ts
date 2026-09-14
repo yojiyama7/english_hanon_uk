@@ -1,3 +1,5 @@
+import pinData from './audio-pins.json';
+
 export type AudioKind = 'single' | 'slow' | 'natural';
 
 export type AudioPin = {
@@ -27,9 +29,8 @@ export type AudioUnitMetadata = {
 	lessons: AudioLessonMetadata[];
 };
 
-// Pin data belongs to the site, not to the audio files. Add entries by expected filename.
-// Example: '001_RP_Unit 0.1.mp3': [{ atSeconds: 12.3, label: 'Repeat from here' }]
-const pinsByFilename: Record<string, AudioPin[]> = {};
+// Pin data belongs to the site, not to the audio files.
+const pinsByFilename = pinData as Record<string, AudioPin[]>;
 
 // This catalog intentionally contains metadata only. Audio files remain on the user's device.
 const sectionCounts = [15, 9, 6, 8, 5, 6, 9, 11, 4, 6, 7, 6, 8, 7, 6, 5, 6, 3, 3, 4];
