@@ -48,6 +48,7 @@
 	let pinSaveStates = $state<Record<string, 'idle' | 'saving' | 'error'>>({});
 	let pinErrors = $state<Record<string, string>>({});
 	let pinTimeSaveVersions: Record<string, number> = {};
+	let pinLabelSaveVersions: Record<string, number> = {};
 	let playbackTimes = $state<Record<string, { current: number; duration: number }>>({});
 	let lastUsedAudio: HTMLAudioElement | null = null;
 	let adjustmentStates = $state<
@@ -188,6 +189,7 @@
 
 	function toggleLastUsedAudio(event: KeyboardEvent) {
 		if (event.code !== 'Space') return;
+		if (isTextEntryTarget(event.target)) return;
 		event.preventDefault();
 		event.stopPropagation();
 		if (event.repeat || !lastUsedAudio) return;
@@ -201,8 +203,17 @@
 
 	function preventSpaceDefault(event: KeyboardEvent) {
 		if (event.code !== 'Space') return;
+		if (isTextEntryTarget(event.target)) return;
 		event.preventDefault();
 		event.stopPropagation();
+	}
+
+	function isTextEntryTarget(target: EventTarget | null): boolean {
+		return (
+			target instanceof HTMLInputElement ||
+			target instanceof HTMLTextAreaElement ||
+			(target instanceof HTMLElement && target.isContentEditable)
+		);
 	}
 
 	async function jumpToPin(event: MouseEvent, pin: AudioPin) {
@@ -287,6 +298,45 @@
 			await savePinTime(track, pin, atSeconds);
 		} catch {
 			pinErrors[track.filename] = 'ピンの秒数を変更できませんでした。';
+		}
+	}
+
+	async function updatePinLabel(event: Event, track: PlayableTrack, pin: AudioPin) {
+		const input = event.currentTarget;
+		if (!(input instanceof HTMLInputElement)) return;
+
+		const label = input.value.trim();
+		if (!label) {
+			input.value = pin.label;
+			return;
+		}
+		if (label === pin.label) {
+			input.value = label;
+			return;
+		}
+
+		const previousLabel = pin.label;
+		const saveKey = `${track.filename}\u0000${pin.atSeconds}`;
+		const saveVersion = (pinLabelSaveVersions[saveKey] ?? 0) + 1;
+		pinLabelSaveVersions[saveKey] = saveVersion;
+		pin.label = label;
+		pinErrors[track.filename] = '';
+		try {
+			const response = await fetch('/api/pins', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ filename: track.filename, atSeconds: pin.atSeconds, label })
+			});
+			if (!response.ok) throw new Error(await response.text());
+			const result = (await response.json()) as { pins: AudioPin[] };
+			if (pinLabelSaveVersions[saveKey] !== saveVersion) return;
+			track.pins = result.pins;
+			developmentPins[track.filename] = result.pins;
+		} catch {
+			if (pinLabelSaveVersions[saveKey] !== saveVersion) return;
+			pin.label = previousLabel;
+			input.value = previousLabel;
+			pinErrors[track.filename] = 'ピンのラベルを変更できませんでした。';
 		}
 	}
 
@@ -543,6 +593,16 @@
 						</button>
 						{#if isDevelopment}
 							<div class="pin-time-editor">
+								<label>
+									<span class="visually-hidden">{pin.label}のラベル名</span>
+									<input
+										class="pin-label-input"
+										type="text"
+										maxlength="100"
+										value={pin.label}
+										onchange={(event) => updatePinLabel(event, track, pin)}
+									/>
+								</label>
 								<label>
 									<span class="visually-hidden">{pin.label}の秒数</span>
 									<input
@@ -943,6 +1003,11 @@
 		font: inherit;
 		font-size: 0.74rem;
 		font-variant-numeric: tabular-nums;
+	}
+
+	.pin-time-editor .pin-label-input {
+		width: 112px;
+		font-variant-numeric: normal;
 	}
 
 	.pin-time-editor .seconds-unit {
