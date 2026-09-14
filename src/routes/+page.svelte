@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { audioCatalog, type AudioKind, type AudioPin } from '$lib/audio-catalog';
+	import {
+		adjustPinToNextOnset,
+		createAudioEnvelope,
+		type AudioEnvelope,
+		type PinAdjustmentResult
+	} from '$lib/audio-onset';
 
 	type PlayableTrack = {
 		url: string;
@@ -43,6 +49,10 @@
 	let pinErrors = $state<Record<string, string>>({});
 	let pinTimeSaveVersions: Record<string, number> = {};
 	let playbackTimes = $state<Record<string, { current: number; duration: number }>>({});
+	let adjustmentStates = $state<
+		Record<string, { busy: boolean; message: string; hasError: boolean }>
+	>({});
+	const audioEnvelopeCache = new Map<string, Promise<AudioEnvelope>>();
 	const isDevelopment = import.meta.env.DEV;
 
 	function openDatabase(): Promise<IDBDatabase> {
@@ -87,6 +97,7 @@
 	function releaseAudioUrls() {
 		for (const url of objectUrls) URL.revokeObjectURL(url);
 		objectUrls = [];
+		audioEnvelopeCache.clear();
 	}
 
 	function buildUnits(files: File[]): UnitGroup[] {
@@ -191,18 +202,12 @@
 		}
 	}
 
-	async function updatePinTime(event: Event, track: PlayableTrack, pin: AudioPin) {
-		const input = event.currentTarget;
-		if (!(input instanceof HTMLInputElement) || !input.validity.valid) return;
-
-		const atSeconds = Math.round(input.valueAsNumber * 10) / 10;
-		if (atSeconds === pin.atSeconds) return;
+	async function savePinTime(track: PlayableTrack, pin: AudioPin, atSeconds: number) {
 		const previousAtSeconds = pin.atSeconds;
 		const saveVersion = (pinTimeSaveVersions[track.filename] ?? 0) + 1;
 		pinTimeSaveVersions[track.filename] = saveVersion;
 		pin.atSeconds = atSeconds;
 		track.pins.sort((a, b) => a.atSeconds - b.atSeconds);
-		pinErrors[track.filename] = '';
 		try {
 			const response = await fetch('/api/pins', {
 				method: 'POST',
@@ -229,7 +234,134 @@
 			if (pinTimeSaveVersions[track.filename] !== saveVersion) return;
 			pin.atSeconds = previousAtSeconds;
 			track.pins.sort((a, b) => a.atSeconds - b.atSeconds);
+			throw new Error('Pin time could not be saved.');
+		}
+	}
+
+	async function updatePinTime(event: Event, track: PlayableTrack, pin: AudioPin) {
+		const input = event.currentTarget;
+		if (!(input instanceof HTMLInputElement) || !input.validity.valid) return;
+
+		const atSeconds = Math.round(input.valueAsNumber * 10) / 10;
+		if (atSeconds === pin.atSeconds) return;
+		pinErrors[track.filename] = '';
+		try {
+			await savePinTime(track, pin, atSeconds);
+		} catch {
 			pinErrors[track.filename] = 'ピンの秒数を変更できませんでした。';
+		}
+	}
+
+	async function getAudioEnvelope(track: PlayableTrack): Promise<AudioEnvelope> {
+		const cachedEnvelope = audioEnvelopeCache.get(track.filename);
+		if (cachedEnvelope) return cachedEnvelope;
+
+		const envelopePromise = (async () => {
+			const response = await fetch(track.url);
+			if (!response.ok) throw new Error('Audio could not be read.');
+			const context = new AudioContext();
+			try {
+				const audioBuffer = await context.decodeAudioData(await response.arrayBuffer());
+				const channels = Array.from({ length: audioBuffer.numberOfChannels }, (_, index) =>
+					audioBuffer.getChannelData(index)
+				);
+				return createAudioEnvelope(channels, audioBuffer.sampleRate);
+			} finally {
+				await context.close();
+			}
+		})();
+		audioEnvelopeCache.set(track.filename, envelopePromise);
+		try {
+			return await envelopePromise;
+		} catch (error) {
+			audioEnvelopeCache.delete(track.filename);
+			throw error;
+		}
+	}
+
+	function adjustmentFailureMessage(pin: AudioPin, result: PinAdjustmentResult): string {
+		return result.ok
+			? ''
+			: result.reason === 'pin-in-sound'
+				? `${pin.label}: ピン位置ですでに音が出ています。`
+				: `${pin.label}: 次の音を検出できませんでした。`;
+	}
+
+	function adjustmentCollision(track: PlayableTrack, pin: AudioPin, atSeconds: number): boolean {
+		return track.pins.some((otherPin) => otherPin !== pin && otherPin.atSeconds === atSeconds);
+	}
+
+	async function adjustSinglePin(track: PlayableTrack, pin: AudioPin) {
+		if (adjustmentStates[track.filename]?.busy) return;
+		adjustmentStates[track.filename] = { busy: true, message: '音声を解析中…', hasError: false };
+		try {
+			const result = adjustPinToNextOnset(await getAudioEnvelope(track), pin.atSeconds);
+			if (!result.ok) {
+				adjustmentStates[track.filename] = {
+					busy: false,
+					message: adjustmentFailureMessage(pin, result),
+					hasError: true
+				};
+				return;
+			}
+			if (adjustmentCollision(track, pin, result.atSeconds)) {
+				adjustmentStates[track.filename] = {
+					busy: false,
+					message: `${pin.label}: 調整先に別のピンがあります。`,
+					hasError: true
+				};
+				return;
+			}
+			if (result.atSeconds !== pin.atSeconds) await savePinTime(track, pin, result.atSeconds);
+			adjustmentStates[track.filename] = {
+				busy: false,
+				message: `${pin.label}: ${formatPinTime(result.atSeconds)}に調整しました。`,
+				hasError: false
+			};
+		} catch {
+			adjustmentStates[track.filename] = {
+				busy: false,
+				message: `${pin.label}: 音声の解析または保存に失敗しました。`,
+				hasError: true
+			};
+		}
+	}
+
+	async function adjustAllPins(track: PlayableTrack) {
+		if (adjustmentStates[track.filename]?.busy) return;
+		adjustmentStates[track.filename] = { busy: true, message: '音声を解析中…', hasError: false };
+		let adjustedCount = 0;
+		const failures: string[] = [];
+		try {
+			const envelope = await getAudioEnvelope(track);
+			for (const pin of [...track.pins]) {
+				const result = adjustPinToNextOnset(envelope, pin.atSeconds);
+				if (!result.ok) {
+					failures.push(adjustmentFailureMessage(pin, result));
+					continue;
+				}
+				if (adjustmentCollision(track, pin, result.atSeconds)) {
+					failures.push(`${pin.label}: 調整先に別のピンがあります。`);
+					continue;
+				}
+				try {
+					if (result.atSeconds !== pin.atSeconds) await savePinTime(track, pin, result.atSeconds);
+					adjustedCount += 1;
+				} catch {
+					failures.push(`${pin.label}: 保存に失敗しました。`);
+				}
+			}
+			adjustmentStates[track.filename] = {
+				busy: false,
+				message: `${adjustedCount}件を調整しました。${failures.length ? ` ${failures.join(' ')}` : ''}`,
+				hasError: failures.length > 0
+			};
+		} catch {
+			adjustmentStates[track.filename] = {
+				busy: false,
+				message: '音声を解析できませんでした。',
+				hasError: true
+			};
 		}
 	}
 
@@ -375,6 +507,12 @@
 									/>
 									<span class="seconds-unit">秒</span>
 								</label>
+								<button
+									class="auto-adjust-pin"
+									type="button"
+									disabled={adjustmentStates[track.filename]?.busy}
+									onclick={() => adjustSinglePin(track, pin)}
+								>音に合わせる</button>
 							</div>
 						{/if}
 					</div>
@@ -382,6 +520,25 @@
 			</div>
 		{/if}
 		{#if isDevelopment}
+			{#if track.pins.length > 0}
+				<div class="track-adjustment">
+					<button
+						type="button"
+						disabled={adjustmentStates[track.filename]?.busy}
+						onclick={() => adjustAllPins(track)}
+					>
+						{adjustmentStates[track.filename]?.busy ? '解析中…' : 'すべてのピンを音に合わせる'}
+					</button>
+					{#if adjustmentStates[track.filename]?.message}
+						<p
+							class:adjustment-error={adjustmentStates[track.filename]?.hasError}
+							aria-live="polite"
+						>
+							{adjustmentStates[track.filename].message}
+						</p>
+					{/if}
+				</div>
+			{/if}
 			<form class="pin-editor" onsubmit={(event) => addPin(event, track)}>
 				<input
 					type="text"
@@ -749,6 +906,48 @@
 		text-transform: none;
 	}
 
+	.pin-time-editor .auto-adjust-pin,
+	.track-adjustment button {
+		min-height: 30px;
+		padding: 0 8px;
+		border: 1px solid #999;
+		background: #fff;
+		color: #222;
+		font: inherit;
+		font-size: 0.7rem;
+		cursor: pointer;
+	}
+
+	.pin-time-editor .auto-adjust-pin:hover,
+	.track-adjustment button:hover {
+		border-color: #111;
+	}
+
+	.pin-time-editor .auto-adjust-pin:disabled,
+	.track-adjustment button:disabled {
+		color: #777;
+		cursor: default;
+	}
+
+	.track-adjustment {
+		display: flex;
+		grid-column: 2;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+
+	.track-adjustment p {
+		margin: 0;
+		color: #555;
+		font-size: 0.72rem;
+		line-height: 1.5;
+	}
+
+	.track-adjustment p.adjustment-error {
+		color: #a12618;
+	}
+
 	.visually-hidden {
 		position: absolute;
 		width: 1px;
@@ -959,6 +1158,7 @@
 
 		.playback-time,
 		.pins,
+		.track-adjustment,
 		.pin-editor {
 			grid-column: 1;
 		}
