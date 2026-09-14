@@ -49,6 +49,7 @@
 	let pinErrors = $state<Record<string, string>>({});
 	let pinTimeSaveVersions: Record<string, number> = {};
 	let pinLabelSaveVersions: Record<string, number> = {};
+	let pinDeleteStates = $state<Record<string, boolean>>({});
 	let playbackTimes = $state<Record<string, { current: number; duration: number }>>({});
 	let lastUsedAudio: HTMLAudioElement | null = null;
 	let adjustmentStates = $state<
@@ -216,6 +217,10 @@
 		);
 	}
 
+	function pinStateKey(track: PlayableTrack, pin: AudioPin): string {
+		return `${track.filename}\u0000${pin.atSeconds}`;
+	}
+
 	async function jumpToPin(event: MouseEvent, pin: AudioPin) {
 		const player = (event.currentTarget as HTMLElement).closest('.player');
 		const audio = player?.querySelector('audio');
@@ -316,7 +321,7 @@
 		}
 
 		const previousLabel = pin.label;
-		const saveKey = `${track.filename}\u0000${pin.atSeconds}`;
+		const saveKey = pinStateKey(track, pin);
 		const saveVersion = (pinLabelSaveVersions[saveKey] ?? 0) + 1;
 		pinLabelSaveVersions[saveKey] = saveVersion;
 		pin.label = label;
@@ -337,6 +342,29 @@
 			pin.label = previousLabel;
 			input.value = previousLabel;
 			pinErrors[track.filename] = 'ピンのラベルを変更できませんでした。';
+		}
+	}
+
+	async function deletePin(track: PlayableTrack, pin: AudioPin) {
+		if (!window.confirm(`「${pin.label}」のピンを削除しますか？`)) return;
+
+		const deleteKey = pinStateKey(track, pin);
+		pinDeleteStates[deleteKey] = true;
+		pinErrors[track.filename] = '';
+		try {
+			const response = await fetch('/api/pins', {
+				method: 'DELETE',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ filename: track.filename, atSeconds: pin.atSeconds })
+			});
+			if (!response.ok) throw new Error(await response.text());
+			const result = (await response.json()) as { pins: AudioPin[] };
+			track.pins = result.pins;
+			developmentPins[track.filename] = result.pins;
+		} catch {
+			pinErrors[track.filename] = 'ピンを削除できませんでした。';
+		} finally {
+			pinDeleteStates[deleteKey] = false;
 		}
 	}
 
@@ -600,6 +628,7 @@
 										type="text"
 										maxlength="100"
 										value={pin.label}
+										disabled={pinDeleteStates[pinStateKey(track, pin)]}
 										onchange={(event) => updatePinLabel(event, track, pin)}
 									/>
 								</label>
@@ -610,6 +639,7 @@
 										min="0"
 										step="0.1"
 										value={pin.atSeconds}
+										disabled={pinDeleteStates[pinStateKey(track, pin)]}
 										onchange={(event) => updatePinTime(event, track, pin)}
 									/>
 									<span class="seconds-unit">秒</span>
@@ -617,9 +647,18 @@
 								<button
 									class="auto-adjust-pin"
 									type="button"
-									disabled={adjustmentStates[track.filename]?.busy}
+									disabled={adjustmentStates[track.filename]?.busy ||
+										pinDeleteStates[pinStateKey(track, pin)]}
 									onclick={() => adjustSinglePin(track, pin)}
 								>音に合わせる</button>
+								<button
+									class="delete-pin"
+									type="button"
+									disabled={pinDeleteStates[pinStateKey(track, pin)]}
+									onclick={() => deletePin(track, pin)}
+								>
+									{pinDeleteStates[pinStateKey(track, pin)] ? '削除中…' : '削除'}
+								</button>
 							</div>
 						{/if}
 					</div>
@@ -1019,6 +1058,7 @@
 	}
 
 	.pin-time-editor .auto-adjust-pin,
+	.pin-time-editor .delete-pin,
 	.track-adjustment button {
 		min-height: 30px;
 		padding: 0 8px;
@@ -1031,14 +1071,21 @@
 	}
 
 	.pin-time-editor .auto-adjust-pin:hover,
+	.pin-time-editor .delete-pin:hover,
 	.track-adjustment button:hover {
 		border-color: #111;
 	}
 
 	.pin-time-editor .auto-adjust-pin:disabled,
+	.pin-time-editor .delete-pin:disabled,
 	.track-adjustment button:disabled {
 		color: #777;
 		cursor: default;
+	}
+
+	.pin-time-editor .delete-pin {
+		border-color: #c8a3a3;
+		color: #9d2222;
 	}
 
 	.track-adjustment {

@@ -70,3 +70,35 @@ export async function POST({ request, url }) {
 
 	return json({ pins: savedPins });
 }
+
+export async function DELETE({ request, url }) {
+	if (!dev) error(404, 'Not found');
+	if (request.headers.get('origin') !== url.origin) error(403, 'Invalid origin');
+
+	const body = (await request.json().catch(() => null)) as
+		| { filename?: string; atSeconds?: number }
+		| null;
+	const filename = body?.filename;
+	const atSeconds = body?.atSeconds;
+
+	if (!filename || !knownFilenames.has(filename)) error(400, 'Unknown audio filename');
+	if (!isValidPinTime(atSeconds)) {
+		error(400, 'Pin time must be a non-negative number with 0.1-second precision');
+	}
+
+	let savedPins: AudioPin[] = [];
+	const operation = writeQueue.then(async () => {
+		const allPins = await readPins();
+		const pins = allPins[filename] ?? [];
+		if (!pins.some((pin) => pin.atSeconds === atSeconds)) error(404, 'Pin not found');
+		savedPins = pins.filter((pin) => pin.atSeconds !== atSeconds);
+		allPins[filename] = savedPins;
+		const sortedPins = Object.fromEntries(Object.entries(allPins).sort(([a], [b]) => a.localeCompare(b)));
+		await writeFile(temporaryPinsPath, `${JSON.stringify(sortedPins, null, '\t')}\n`, 'utf8');
+		await rename(temporaryPinsPath, pinsPath);
+	});
+	writeQueue = operation.catch(() => undefined);
+	await operation;
+
+	return json({ pins: savedPins });
+}
