@@ -174,9 +174,22 @@
 		if (audio instanceof HTMLAudioElement) lastUsedAudio = audio;
 	}
 
+	function updatePlaybackTimeAndRemember(event: Event, filename: string) {
+		updatePlaybackTime(event, filename);
+		rememberAudio(event);
+	}
+
+	function finishSeeking(event: Event) {
+		const audio = event.currentTarget;
+		if (!(audio instanceof HTMLAudioElement)) return;
+		lastUsedAudio = audio;
+		audio.blur();
+	}
+
 	function toggleLastUsedAudio(event: KeyboardEvent) {
 		if (event.code !== 'Space') return;
 		event.preventDefault();
+		event.stopPropagation();
 		if (event.repeat || !lastUsedAudio) return;
 
 		if (lastUsedAudio.paused) {
@@ -184,6 +197,12 @@
 		} else {
 			lastUsedAudio.pause();
 		}
+	}
+
+	function preventSpaceDefault(event: KeyboardEvent) {
+		if (event.code !== 'Space') return;
+		event.preventDefault();
+		event.stopPropagation();
 	}
 
 	async function jumpToPin(event: MouseEvent, pin: AudioPin) {
@@ -487,7 +506,10 @@
 	onDestroy(releaseAudioUrls);
 </script>
 
-<svelte:window onkeydowncapture={toggleLastUsedAudio} />
+<svelte:window
+	onkeydowncapture={toggleLastUsedAudio}
+	onkeyupcapture={preventSpaceDefault}
+/>
 
 {#snippet audioPlayer(label: string, track: PlayableTrack, ariaLabel: string)}
 	<div class="player">
@@ -500,7 +522,8 @@
 			onloadedmetadata={(event) => updatePlaybackTime(event, track.filename)}
 			ondurationchange={(event) => updatePlaybackTime(event, track.filename)}
 			ontimeupdate={(event) => updatePlaybackTime(event, track.filename)}
-			onseeking={(event) => updatePlaybackTime(event, track.filename)}
+			onseeking={(event) => updatePlaybackTimeAndRemember(event, track.filename)}
+			onseeked={finishSeeking}
 			onpointerdown={rememberAudio}
 			onplay={rememberAudio}
 			onpause={rememberAudio}
