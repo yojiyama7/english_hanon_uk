@@ -175,12 +175,12 @@
 		}
 	}
 
-	async function updatePinTime(event: SubmitEvent, track: PlayableTrack, pin: AudioPin) {
-		event.preventDefault();
-		const input = (event.currentTarget as HTMLFormElement).elements.namedItem('atSeconds');
+	async function updatePinTime(event: Event, track: PlayableTrack, pin: AudioPin) {
+		const input = event.currentTarget;
 		if (!(input instanceof HTMLInputElement) || !input.validity.valid) return;
 
 		const atSeconds = Math.round(input.valueAsNumber * 10) / 10;
+		if (atSeconds === pin.atSeconds) return;
 		pinSaveStates[track.filename] = 'saving';
 		pinErrors[track.filename] = '';
 		try {
@@ -321,16 +321,23 @@
 							{pin.label}
 						</button>
 						{#if isDevelopment}
-							<form class="pin-time-editor" onsubmit={(event) => updatePinTime(event, track, pin)}>
+							<div class="pin-time-editor">
 								<label>
 									<span class="visually-hidden">{pin.label}の秒数</span>
-									<input name="atSeconds" type="number" min="0" step="0.1" value={pin.atSeconds} />
+									<input
+										type="number"
+										min="0"
+										step="0.1"
+										value={pin.atSeconds}
+										disabled={pinSaveStates[track.filename] === 'saving'}
+										onchange={(event) => updatePinTime(event, track, pin)}
+									/>
 									<span class="seconds-unit">秒</span>
 								</label>
-								<button type="submit" disabled={pinSaveStates[track.filename] === 'saving'}>
-									{pinSaveStates[track.filename] === 'saving' ? '保存中…' : '秒数を変更'}
-								</button>
-							</form>
+								{#if pinSaveStates[track.filename] === 'saving'}
+									<span class="save-status" aria-live="polite">保存中…</span>
+								{/if}
+							</div>
 						{/if}
 					</div>
 				{/each}
@@ -694,23 +701,17 @@
 		text-transform: none;
 	}
 
-	.pin-time-editor button {
-		height: 30px;
-		padding: 0 8px;
-		border: 1px solid #999;
-		background: #fff;
-		font: inherit;
-		font-size: 0.7rem;
-		cursor: pointer;
-	}
-
-	.pin-time-editor button:hover {
-		border-color: #111;
-	}
-
-	.pin-time-editor button:disabled {
+	.pin-time-editor input:disabled {
 		color: #777;
 		cursor: default;
+	}
+
+	.pin-time-editor .save-status {
+		color: #666;
+		font-size: 0.68rem;
+		font-weight: 500;
+		letter-spacing: 0;
+		text-transform: none;
 	}
 
 	.visually-hidden {
