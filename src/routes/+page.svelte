@@ -175,6 +175,36 @@
 		}
 	}
 
+	async function updatePinTime(event: SubmitEvent, track: PlayableTrack, pin: AudioPin) {
+		event.preventDefault();
+		const input = (event.currentTarget as HTMLFormElement).elements.namedItem('atSeconds');
+		if (!(input instanceof HTMLInputElement) || !input.validity.valid) return;
+
+		const atSeconds = Math.round(input.valueAsNumber * 10) / 10;
+		pinSaveStates[track.filename] = 'saving';
+		pinErrors[track.filename] = '';
+		try {
+			const response = await fetch('/api/pins', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					filename: track.filename,
+					previousAtSeconds: pin.atSeconds,
+					atSeconds,
+					label: pin.label
+				})
+			});
+			if (!response.ok) throw new Error(await response.text());
+			const result = (await response.json()) as { pins: AudioPin[] };
+			track.pins = result.pins;
+			developmentPins[track.filename] = result.pins;
+			pinSaveStates[track.filename] = 'idle';
+		} catch {
+			pinSaveStates[track.filename] = 'error';
+			pinErrors[track.filename] = 'ピンの秒数を変更できませんでした。';
+		}
+	}
+
 	async function loadDevelopmentPins() {
 		if (!isDevelopment) return;
 		const response = await fetch('/api/pins');
@@ -285,10 +315,24 @@
 		{#if track.pins.length > 0}
 			<div class="pins" aria-label={`${ariaLabel} markers`}>
 				{#each track.pins as pin}
-					<button type="button" onclick={(event) => jumpToPin(event, pin)}>
-						<span class="pin-time">{formatPinTime(pin.atSeconds)}</span>
-						{pin.label}
-					</button>
+					<div class="pin-entry">
+						<button class="pin-jump" type="button" onclick={(event) => jumpToPin(event, pin)}>
+							<span class="pin-time">{formatPinTime(pin.atSeconds)}</span>
+							{pin.label}
+						</button>
+						{#if isDevelopment}
+							<form class="pin-time-editor" onsubmit={(event) => updatePinTime(event, track, pin)}>
+								<label>
+									<span class="visually-hidden">{pin.label}の秒数</span>
+									<input name="atSeconds" type="number" min="0" step="0.1" value={pin.atSeconds} />
+									<span class="seconds-unit">秒</span>
+								</label>
+								<button type="submit" disabled={pinSaveStates[track.filename] === 'saving'}>
+									{pinSaveStates[track.filename] === 'saving' ? '保存中…' : '秒数を変更'}
+								</button>
+							</form>
+						{/if}
+					</div>
 				{/each}
 			</div>
 		{/if}
@@ -589,7 +633,13 @@
 		gap: 6px;
 	}
 
-	.pins button {
+	.pin-entry {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+	}
+
+	.pins .pin-jump {
 		padding: 6px 9px;
 		border: 1px solid #c8c8c8;
 		border-radius: 999px;
@@ -600,7 +650,7 @@
 		cursor: pointer;
 	}
 
-	.pins button:hover {
+	.pins .pin-jump:hover {
 		border-color: #111;
 		background: #f5f5f5;
 	}
@@ -612,6 +662,66 @@
 		font-variant-numeric: tabular-nums;
 		letter-spacing: 0;
 		text-transform: none;
+	}
+
+	.pin-time-editor {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+	}
+
+	.pin-time-editor label {
+		display: flex;
+		align-items: center;
+		gap: 3px;
+	}
+
+	.pin-time-editor input {
+		width: 68px;
+		height: 30px;
+		padding: 0 5px;
+		border: 1px solid #bbb;
+		font: inherit;
+		font-size: 0.74rem;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.pin-time-editor .seconds-unit {
+		color: #666;
+		font-size: 0.7rem;
+		font-weight: 500;
+		letter-spacing: 0;
+		text-transform: none;
+	}
+
+	.pin-time-editor button {
+		height: 30px;
+		padding: 0 8px;
+		border: 1px solid #999;
+		background: #fff;
+		font: inherit;
+		font-size: 0.7rem;
+		cursor: pointer;
+	}
+
+	.pin-time-editor button:hover {
+		border-color: #111;
+	}
+
+	.pin-time-editor button:disabled {
+		color: #777;
+		cursor: default;
+	}
+
+	.visually-hidden {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	.pin-editor {
