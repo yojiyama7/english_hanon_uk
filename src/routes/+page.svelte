@@ -41,6 +41,7 @@
 	let pinDrafts = $state<Record<string, string>>({});
 	let pinSaveStates = $state<Record<string, 'idle' | 'saving' | 'error'>>({});
 	let pinErrors = $state<Record<string, string>>({});
+	let pinTimeSaveVersions: Record<string, number> = {};
 	let playbackTimes = $state<Record<string, { current: number; duration: number }>>({});
 	const isDevelopment = import.meta.env.DEV;
 
@@ -196,7 +197,11 @@
 
 		const atSeconds = Math.round(input.valueAsNumber * 10) / 10;
 		if (atSeconds === pin.atSeconds) return;
-		pinSaveStates[track.filename] = 'saving';
+		const previousAtSeconds = pin.atSeconds;
+		const saveVersion = (pinTimeSaveVersions[track.filename] ?? 0) + 1;
+		pinTimeSaveVersions[track.filename] = saveVersion;
+		pin.atSeconds = atSeconds;
+		track.pins.sort((a, b) => a.atSeconds - b.atSeconds);
 		pinErrors[track.filename] = '';
 		try {
 			const response = await fetch('/api/pins', {
@@ -204,18 +209,26 @@
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
 					filename: track.filename,
-					previousAtSeconds: pin.atSeconds,
+					previousAtSeconds,
 					atSeconds,
 					label: pin.label
 				})
 			});
 			if (!response.ok) throw new Error(await response.text());
 			const result = (await response.json()) as { pins: AudioPin[] };
-			track.pins = result.pins;
+			if (pinTimeSaveVersions[track.filename] !== saveVersion) return;
+			const matchesCurrentPins =
+				result.pins.length === track.pins.length &&
+				result.pins.every(
+					(savedPin, index) =>
+						savedPin.atSeconds === track.pins[index].atSeconds && savedPin.label === track.pins[index].label
+				);
+			if (!matchesCurrentPins) track.pins = result.pins;
 			developmentPins[track.filename] = result.pins;
-			pinSaveStates[track.filename] = 'idle';
 		} catch {
-			pinSaveStates[track.filename] = 'error';
+			if (pinTimeSaveVersions[track.filename] !== saveVersion) return;
+			pin.atSeconds = previousAtSeconds;
+			track.pins.sort((a, b) => a.atSeconds - b.atSeconds);
 			pinErrors[track.filename] = 'ピンの秒数を変更できませんでした。';
 		}
 	}
@@ -358,14 +371,10 @@
 										min="0"
 										step="0.1"
 										value={pin.atSeconds}
-										disabled={pinSaveStates[track.filename] === 'saving'}
 										onchange={(event) => updatePinTime(event, track, pin)}
 									/>
 									<span class="seconds-unit">秒</span>
 								</label>
-								{#if pinSaveStates[track.filename] === 'saving'}
-									<span class="save-status" aria-live="polite">保存中…</span>
-								{/if}
 							</div>
 						{/if}
 					</div>
@@ -734,19 +743,6 @@
 	.pin-time-editor .seconds-unit {
 		color: #666;
 		font-size: 0.7rem;
-		font-weight: 500;
-		letter-spacing: 0;
-		text-transform: none;
-	}
-
-	.pin-time-editor input:disabled {
-		color: #777;
-		cursor: default;
-	}
-
-	.pin-time-editor .save-status {
-		color: #666;
-		font-size: 0.68rem;
 		font-weight: 500;
 		letter-spacing: 0;
 		text-transform: none;
