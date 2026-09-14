@@ -689,7 +689,8 @@
 
 	.pin-entry {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
+		flex-direction: column;
 		gap: 5px;
 	}
 
