@@ -40,25 +40,26 @@ test('reports when no later onset exists', () => {
 	assert.deepEqual(adjustPinToNextOnset(envelope, 0.2), { ok: false, reason: 'no-onset' });
 });
 
-test('clamps the adjusted time to zero', () => {
+test('requires a full 0.4 seconds of silence before an onset', () => {
 	const envelope = createAudioEnvelope([samplesWithSound([[0.2, 0.8]])], sampleRate);
-	assert.deepEqual(adjustPinToNextOnset(envelope, 0), { ok: true, atSeconds: 0, onsetSeconds: 0.2 });
+	assert.deepEqual(adjustPinToNextOnset(envelope, 0), { ok: false, reason: 'no-onset' });
+	assert.deepEqual(findStandardPinPositions(envelope), []);
 });
 
-test('lists standard pin positions in order for each sustained sound', () => {
+test('lists onsets preceded by at least 0.4 seconds of silence as standard positions', () => {
 	const envelope = createAudioEnvelope(
-		[samplesWithSound([[0.5, 0.8], [1.1, 1.4], [1.7, 1.9]])],
+		[samplesWithSound([[0.5, 0.7], [1.1, 1.3], [1.7, 1.9]])],
 		sampleRate
 	);
 	assert.deepEqual(findStandardPinPositions(envelope), [0.1, 0.7, 1.3]);
 });
 
-test('ignores short sounds and deduplicates positions clamped to zero', () => {
+test('rejects onsets when the preceding 0.4 seconds contains sound', () => {
 	const envelope = createAudioEnvelope(
-		[samplesWithSound([[0.02, 0.08], [0.1, 0.13], [0.2, 0.28], [0.6, 0.9]])],
+		[samplesWithSound([[0.2, 0.23], [0.5, 0.7], [1, 1.2], [1.7, 1.9]], 2.1)],
 		sampleRate
 	);
-	assert.deepEqual(findStandardPinPositions(envelope), [0, 0.2]);
+	assert.deepEqual(findStandardPinPositions(envelope), [1.3]);
 });
 
 test('selects strict previous and next standard positions', () => {

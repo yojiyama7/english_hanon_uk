@@ -4,6 +4,7 @@ const maximumThresholdDb = -25;
 const noiseMarginDb = 12;
 const requiredSilentFrames = 3;
 const requiredSoundFrames = 5;
+const requiredLeadSilenceSeconds = 0.4;
 
 export type AudioEnvelope = {
 	frames: Float32Array;
@@ -60,12 +61,24 @@ export function createAudioEnvelope(channels: Float32Array[], sampleRate: number
 function findOnsetFrames(envelope: AudioEnvelope, startFrame = 0): number[] {
 	const onsetFrames: number[] = [];
 	let consecutiveSoundFrames = 0;
+	const requiredLeadSilentFrames = Math.ceil(
+		requiredLeadSilenceSeconds / envelope.frameDurationSeconds
+	);
 
 	for (let index = startFrame; index < envelope.frames.length; index += 1) {
 		if (envelope.frames[index] >= envelope.threshold) {
 			consecutiveSoundFrames += 1;
 			if (consecutiveSoundFrames === requiredSoundFrames) {
-				onsetFrames.push(index - requiredSoundFrames + 1);
+				const onsetFrame = index - requiredSoundFrames + 1;
+				const silenceStart = onsetFrame - requiredLeadSilentFrames;
+				if (
+					silenceStart >= 0 &&
+					envelope.frames
+						.subarray(silenceStart, onsetFrame)
+						.every((frame) => frame < envelope.threshold)
+				) {
+					onsetFrames.push(onsetFrame);
+				}
 			}
 		} else {
 			consecutiveSoundFrames = 0;
@@ -77,7 +90,7 @@ function findOnsetFrames(envelope: AudioEnvelope, startFrame = 0): number[] {
 
 function pinPositionForOnset(envelope: AudioEnvelope, onsetFrame: number): number {
 	const onsetSeconds = onsetFrame * envelope.frameDurationSeconds;
-	return Math.round(Math.max(0, onsetSeconds - 0.4) * 10) / 10;
+	return Math.round((onsetSeconds - requiredLeadSilenceSeconds) * 10) / 10;
 }
 
 export function findStandardPinPositions(envelope: AudioEnvelope): number[] {
