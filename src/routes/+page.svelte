@@ -13,8 +13,11 @@
 	import {
 		adjustPinToNextOnset,
 		createAudioEnvelope,
+		findAdjacentPinPosition,
+		findStandardPinPositions,
 		type AudioEnvelope,
-		type PinAdjustmentResult
+		type PinAdjustmentResult,
+		type PinPositionDirection
 	} from '$lib/audio-onset';
 	import { lessonId, parseTranscript, type TranscriptSentence } from '$lib/transcript';
 	import {
@@ -89,6 +92,14 @@
 	let adjustmentStates = $state<
 		Record<string, { busy: boolean; message: string; hasError: boolean }>
 	>({});
+	let standardPositionStates = $state<
+		Record<
+			string,
+			| { status: 'loading'; sourceUrl: string }
+			| { status: 'ready'; sourceUrl: string; positions: number[] }
+			| { status: 'error'; sourceUrl: string }
+		>
+	>({});
 	const audioEnvelopeCache = new Map<string, Promise<AudioEnvelope>>();
 	const isDevelopment = import.meta.env.DEV;
 	const expectedAudioFilenames = audioCatalog.flatMap((group) =>
@@ -106,6 +117,8 @@
 		for (const url of objectUrls) URL.revokeObjectURL(url);
 		objectUrls = [];
 		audioEnvelopeCache.clear();
+		adjustmentStates = {};
+		standardPositionStates = {};
 	}
 
 	function buildUnits(
@@ -236,6 +249,21 @@
 		return lesson.tracks[selectedTrackKinds[lessonId(lesson.unit, lesson.section)] ?? 'slow'];
 	}
 
+	function selectTrack(lesson: Lesson, kind: 'slow' | 'natural') {
+		const key = lessonId(lesson.unit, lesson.section);
+		selectedTrackKinds[key] = kind;
+		const track = lesson.tracks[kind];
+		if (
+			isDevelopment &&
+			transcriptOpenStates[key] &&
+			track &&
+			lesson.transcript &&
+			hasVisiblePins(track, lesson.transcript)
+		) {
+			void loadStandardPositions(track);
+		}
+	}
+
 	function pinFor(track: PlayableTrack, sentenceIndex: number): AudioPin | undefined {
 		return track.pins.find((pin) => pin.sentenceIndex === sentenceIndex);
 	}
@@ -257,7 +285,18 @@
 			return;
 		}
 		const key = lessonId(lesson.unit, lesson.section);
-		transcriptOpenStates[key] = !transcriptOpenStates[key];
+		const isOpen = !transcriptOpenStates[key];
+		transcriptOpenStates[key] = isOpen;
+		const track = selectedTrack(lesson);
+		if (
+			isDevelopment &&
+			isOpen &&
+			track &&
+			lesson.transcript &&
+			hasVisiblePins(track, lesson.transcript)
+		) {
+			void loadStandardPositions(track);
+		}
 	}
 
 	function activateSentence(
@@ -299,6 +338,7 @@
 			if (pinSaveVersions[saveKey] !== saveVersion) return;
 			track.pins = result.pins;
 			developmentPins[track.filename] = result.pins;
+			void loadStandardPositions(track);
 		} catch {
 			if (pinSaveVersions[saveKey] !== saveVersion) return;
 			track.pins = previousPins;
@@ -380,6 +420,84 @@
 		} catch (error) {
 			audioEnvelopeCache.delete(track.filename);
 			throw error;
+		}
+	}
+
+	async function loadStandardPositions(track: PlayableTrack) {
+		const currentState = standardPositionStates[track.filename];
+		if (
+			currentState?.sourceUrl === track.url &&
+			(currentState.status === 'loading' || currentState.status === 'ready')
+		) {
+			return;
+		}
+
+		standardPositionStates[track.filename] = { status: 'loading', sourceUrl: track.url };
+		adjustmentStates[track.filename] = {
+			busy: true,
+			message: '規定位置を解析中…',
+			hasError: false
+		};
+		try {
+			const positions = findStandardPinPositions(await getAudioEnvelope(track));
+			if (standardPositionStates[track.filename]?.sourceUrl !== track.url) return;
+			standardPositionStates[track.filename] = {
+				status: 'ready',
+				sourceUrl: track.url,
+				positions
+			};
+			adjustmentStates[track.filename] = { busy: false, message: '', hasError: false };
+		} catch {
+			if (standardPositionStates[track.filename]?.sourceUrl !== track.url) return;
+			standardPositionStates[track.filename] = { status: 'error', sourceUrl: track.url };
+			adjustmentStates[track.filename] = {
+				busy: false,
+				message: '規定位置を解析できませんでした。',
+				hasError: true
+			};
+		}
+	}
+
+	function adjacentStandardPosition(
+		track: PlayableTrack,
+		pin: AudioPin,
+		direction: PinPositionDirection
+	): number | undefined {
+		const state = standardPositionStates[track.filename];
+		return state?.status === 'ready' && state.sourceUrl === track.url
+			? findAdjacentPinPosition(state.positions, pin.atSeconds, direction)
+			: undefined;
+	}
+
+	async function movePinToStandardPosition(
+		track: PlayableTrack,
+		pin: AudioPin,
+		direction: PinPositionDirection
+	) {
+		if (adjustmentStates[track.filename]?.busy) return;
+		const atSeconds = adjacentStandardPosition(track, pin, direction);
+		if (atSeconds === undefined) return;
+
+		adjustmentStates[track.filename] = { busy: true, message: 'ピンを保存中…', hasError: false };
+		try {
+			await savePinTime(track, pin.sentenceIndex, atSeconds);
+			const audio = audioForTrack(track);
+			if (audio) {
+				audio.pause();
+				audio.currentTime = atSeconds;
+				lastUsedAudio = audio;
+			}
+			adjustmentStates[track.filename] = {
+				busy: false,
+				message: `文${pin.sentenceIndex + 1}: ${formatPinTime(atSeconds)}へ移動しました。`,
+				hasError: false
+			};
+		} catch {
+			adjustmentStates[track.filename] = {
+				busy: false,
+				message: `文${pin.sentenceIndex + 1}: ピンを移動できませんでした。`,
+				hasError: true
+			};
 		}
 	}
 
@@ -739,13 +857,13 @@
 													type="button"
 													class:active={(selectedTrackKinds[lessonId(lesson.unit, lesson.section)] ?? 'slow') === 'slow'}
 													aria-pressed={(selectedTrackKinds[lessonId(lesson.unit, lesson.section)] ?? 'slow') === 'slow'}
-													onclick={() => (selectedTrackKinds[lessonId(lesson.unit, lesson.section)] = 'slow')}
+													onclick={() => selectTrack(lesson, 'slow')}
 												>Slow</button>
 												<button
 													type="button"
 													class:active={selectedTrackKinds[lessonId(lesson.unit, lesson.section)] === 'natural'}
 													aria-pressed={selectedTrackKinds[lessonId(lesson.unit, lesson.section)] === 'natural'}
-													onclick={() => (selectedTrackKinds[lessonId(lesson.unit, lesson.section)] = 'natural')}
+													onclick={() => selectTrack(lesson, 'natural')}
 												>Natural</button>
 											</div>
 										{/if}
@@ -817,6 +935,22 @@
 																	disabled={adjustmentStates[activeTrack.filename]?.busy || pinDeleteStates[pinStateKey(activeTrack, sentence.index)]}
 																	onclick={() => adjustSinglePin(activeTrack, pin)}
 																>音に合わせる</button>
+																<button
+																	type="button"
+																	disabled={adjustmentStates[activeTrack.filename]?.busy ||
+																		pinSaveStates[pinStateKey(activeTrack, sentence.index)] ||
+																		pinDeleteStates[pinStateKey(activeTrack, sentence.index)] ||
+																		adjacentStandardPosition(activeTrack, pin, 'previous') === undefined}
+																	onclick={() => movePinToStandardPosition(activeTrack, pin, 'previous')}
+																>前の規定位置</button>
+																<button
+																	type="button"
+																	disabled={adjustmentStates[activeTrack.filename]?.busy ||
+																		pinSaveStates[pinStateKey(activeTrack, sentence.index)] ||
+																		pinDeleteStates[pinStateKey(activeTrack, sentence.index)] ||
+																		adjacentStandardPosition(activeTrack, pin, 'next') === undefined}
+																	onclick={() => movePinToStandardPosition(activeTrack, pin, 'next')}
+																>次の規定位置</button>
 																<button
 																	class="delete-pin"
 																	type="button"

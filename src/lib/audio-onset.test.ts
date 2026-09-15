@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { adjustPinToNextOnset, createAudioEnvelope } from './audio-onset.ts';
+import {
+	adjustPinToNextOnset,
+	createAudioEnvelope,
+	findAdjacentPinPosition,
+	findStandardPinPositions
+} from './audio-onset.ts';
 
 const sampleRate = 1000;
 
@@ -38,4 +43,40 @@ test('reports when no later onset exists', () => {
 test('clamps the adjusted time to zero', () => {
 	const envelope = createAudioEnvelope([samplesWithSound([[0.2, 0.8]])], sampleRate);
 	assert.deepEqual(adjustPinToNextOnset(envelope, 0), { ok: true, atSeconds: 0, onsetSeconds: 0.2 });
+});
+
+test('lists standard pin positions in order for each sustained sound', () => {
+	const envelope = createAudioEnvelope(
+		[samplesWithSound([[0.5, 0.8], [1.1, 1.4], [1.7, 1.9]])],
+		sampleRate
+	);
+	assert.deepEqual(findStandardPinPositions(envelope), [0.1, 0.7, 1.3]);
+});
+
+test('ignores short sounds and deduplicates positions clamped to zero', () => {
+	const envelope = createAudioEnvelope(
+		[samplesWithSound([[0.02, 0.08], [0.1, 0.13], [0.2, 0.28], [0.6, 0.9]])],
+		sampleRate
+	);
+	assert.deepEqual(findStandardPinPositions(envelope), [0, 0.2]);
+});
+
+test('selects strict previous and next standard positions', () => {
+	const positions = [0.4, 1.2, 2];
+	assert.equal(findAdjacentPinPosition(positions, 1.2, 'previous'), 0.4);
+	assert.equal(findAdjacentPinPosition(positions, 1.2, 'next'), 2);
+	assert.equal(findAdjacentPinPosition(positions, 0.8, 'previous'), 0.4);
+	assert.equal(findAdjacentPinPosition(positions, 0.8, 'next'), 1.2);
+});
+
+test('reports no adjacent position at either edge or in an empty list', () => {
+	const positions = [0.4, 1.2];
+	assert.equal(findAdjacentPinPosition(positions, 0.4, 'previous'), undefined);
+	assert.equal(findAdjacentPinPosition(positions, 1.2, 'next'), undefined);
+	assert.equal(findAdjacentPinPosition(positions, 0.1, 'previous'), undefined);
+	assert.equal(findAdjacentPinPosition(positions, 2, 'next'), undefined);
+	assert.equal(findAdjacentPinPosition(positions, 0.1, 'next'), 0.4);
+	assert.equal(findAdjacentPinPosition(positions, 2, 'previous'), 1.2);
+	assert.equal(findAdjacentPinPosition([], 0.8, 'previous'), undefined);
+	assert.equal(findAdjacentPinPosition([], 0.8, 'next'), undefined);
 });

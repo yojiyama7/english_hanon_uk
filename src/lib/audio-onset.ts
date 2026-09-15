@@ -15,6 +15,8 @@ export type PinAdjustmentResult =
 	| { ok: true; atSeconds: number; onsetSeconds: number }
 	| { ok: false; reason: 'pin-in-sound' | 'no-onset' };
 
+export type PinPositionDirection = 'previous' | 'next';
+
 function amplitudeToDb(amplitude: number): number {
 	return amplitude > 0 ? 20 * Math.log10(amplitude) : Number.NEGATIVE_INFINITY;
 }
@@ -55,6 +57,47 @@ export function createAudioEnvelope(channels: Float32Array[], sampleRate: number
 	return { frames, frameDurationSeconds, threshold: dbToAmplitude(thresholdDb) };
 }
 
+function findOnsetFrames(envelope: AudioEnvelope, startFrame = 0): number[] {
+	const onsetFrames: number[] = [];
+	let consecutiveSoundFrames = 0;
+
+	for (let index = startFrame; index < envelope.frames.length; index += 1) {
+		if (envelope.frames[index] >= envelope.threshold) {
+			consecutiveSoundFrames += 1;
+			if (consecutiveSoundFrames === requiredSoundFrames) {
+				onsetFrames.push(index - requiredSoundFrames + 1);
+			}
+		} else {
+			consecutiveSoundFrames = 0;
+		}
+	}
+
+	return onsetFrames;
+}
+
+function pinPositionForOnset(envelope: AudioEnvelope, onsetFrame: number): number {
+	const onsetSeconds = onsetFrame * envelope.frameDurationSeconds;
+	return Math.round(Math.max(0, onsetSeconds - 0.4) * 10) / 10;
+}
+
+export function findStandardPinPositions(envelope: AudioEnvelope): number[] {
+	return [...new Set(findOnsetFrames(envelope).map((frame) => pinPositionForOnset(envelope, frame)))];
+}
+
+export function findAdjacentPinPosition(
+	positions: number[],
+	currentSeconds: number,
+	direction: PinPositionDirection
+): number | undefined {
+	if (direction === 'previous') {
+		for (let index = positions.length - 1; index >= 0; index -= 1) {
+			if (positions[index] < currentSeconds) return positions[index];
+		}
+		return undefined;
+	}
+	return positions.find((position) => position > currentSeconds);
+}
+
 export function adjustPinToNextOnset(envelope: AudioEnvelope, pinSeconds: number): PinAdjustmentResult {
 	const startFrame = Math.max(0, Math.floor(pinSeconds / envelope.frameDurationSeconds));
 	const silenceEnd = Math.min(startFrame + requiredSilentFrames, envelope.frames.length);
@@ -63,19 +106,10 @@ export function adjustPinToNextOnset(envelope: AudioEnvelope, pinSeconds: number
 	}
 	if (silenceEnd - startFrame < requiredSilentFrames) return { ok: false, reason: 'no-onset' };
 
-	let consecutiveSoundFrames = 0;
-	for (let index = silenceEnd; index < envelope.frames.length; index += 1) {
-		if (envelope.frames[index] >= envelope.threshold) {
-			consecutiveSoundFrames += 1;
-			if (consecutiveSoundFrames === requiredSoundFrames) {
-				const onsetFrame = index - requiredSoundFrames + 1;
-				const onsetSeconds = onsetFrame * envelope.frameDurationSeconds;
-				const atSeconds = Math.round(Math.max(0, onsetSeconds - 0.4) * 10) / 10;
-				return { ok: true, atSeconds, onsetSeconds };
-			}
-		} else {
-			consecutiveSoundFrames = 0;
-		}
+	const onsetFrame = findOnsetFrames(envelope, silenceEnd)[0];
+	if (onsetFrame !== undefined) {
+		const onsetSeconds = onsetFrame * envelope.frameDurationSeconds;
+		return { ok: true, atSeconds: pinPositionForOnset(envelope, onsetFrame), onsetSeconds };
 	}
 
 	return { ok: false, reason: 'no-onset' };
