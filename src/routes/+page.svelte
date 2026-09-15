@@ -1111,6 +1111,10 @@
 	}
 
 	.transcript-sentence {
+		display: grid;
+		grid-template-columns: minmax(220px, 1fr) auto;
+		align-items: start;
+		column-gap: 16px;
 		padding-top: 8px;
 		padding-bottom: 8px;
 		border-top: 1px solid #ededed;
@@ -1120,6 +1124,7 @@
 		display: flex;
 		align-items: baseline;
 		gap: 8px;
+		min-width: 0;
 	}
 
 	.sentence-bullet {
@@ -1165,9 +1170,9 @@
 	.sentence-editor {
 		display: flex;
 		align-items: center;
-		flex-wrap: wrap;
+		justify-content: flex-end;
 		gap: 5px;
-		margin: 6px 0 0 18px;
+		margin: 0;
 	}
 
 	.sentence-editor label {
@@ -1475,6 +1480,17 @@
 
 		.transcript {
 			margin-left: 0;
+		}
+
+		.transcript-sentence {
+			grid-template-columns: minmax(0, 1fr);
+			row-gap: 7px;
+		}
+
+		.sentence-editor {
+			justify-content: flex-start;
+			flex-wrap: wrap;
+			margin-left: 18px;
 		}
 
 		.player {
