@@ -21,6 +21,11 @@
 		formatBytes,
 		hasStorageCapacity
 	} from '$lib/storage-capacity';
+	import {
+		isAudioFilename,
+		isTranscriptFilename,
+		selectFallbackImportFiles
+	} from '$lib/import-source';
 
 	type PlayableTrack = {
 		url: string;
@@ -43,6 +48,11 @@
 
 	type PermissionCapableDirectoryHandle = FileSystemDirectoryHandle & {
 		values: () => AsyncIterableIterator<FileSystemHandle>;
+	};
+
+	type CollectedImportFiles = {
+		audioFiles: File[];
+		transcriptFile?: File;
 	};
 
 	type ImportPreview = {
@@ -495,19 +505,23 @@
 		if (response.ok) developmentPins = (await response.json()) as Record<string, AudioPin[]>;
 	}
 
-	async function collectImportFiles(handle: PermissionCapableDirectoryHandle): Promise<File[]> {
-		const files: File[] = [];
+	async function collectImportFiles(
+		handle: PermissionCapableDirectoryHandle,
+		includeTranscript = true
+	): Promise<CollectedImportFiles> {
+		const audioFiles: File[] = [];
+		let transcriptFile: File | undefined;
 		for await (const entry of handle.values()) {
-			if (
-				entry.kind === 'file' &&
-				(entry.name.toLowerCase().endsWith('.mp3') || entry.name.toLowerCase().endsWith('.txt'))
-			) {
-				files.push(await (entry as FileSystemFileHandle).getFile());
+			if (entry.kind === 'file' && isAudioFilename(entry.name)) {
+				audioFiles.push(await (entry as FileSystemFileHandle).getFile());
+			} else if (entry.kind === 'file' && includeTranscript && isTranscriptFilename(entry.name)) {
+				transcriptFile = await (entry as FileSystemFileHandle).getFile();
 			} else if (entry.kind === 'directory') {
-				files.push(...(await collectImportFiles(entry as PermissionCapableDirectoryHandle)));
+				const nested = await collectImportFiles(entry as PermissionCapableDirectoryHandle, false);
+				audioFiles.push(...nested.audioFiles);
 			}
 		}
-		return files;
+		return { audioFiles, transcriptFile };
 	}
 
 	async function decodeUtf8(file: File): Promise<string> {
@@ -518,12 +532,12 @@
 		}
 	}
 
-	async function prepareImport(files: File[], selectedFolderName: string) {
+	async function prepareImport(source: CollectedImportFiles, selectedFolderName: string) {
 		phase = 'scanning';
 		errorMessage = '';
 		try {
 			const audioFilesByName = new Map<string, File>();
-			for (const file of files.filter((candidate) => candidate.name.toLowerCase().endsWith('.mp3'))) {
+			for (const file of source.audioFiles) {
 				if (audioFilesByName.has(file.name)) {
 					throw new Error(`同名の音声ファイルが複数あります: ${file.name}`);
 				}
@@ -536,11 +550,7 @@
 				);
 			}
 
-			const transcriptFiles = files.filter((file) => file.name.toLowerCase().endsWith('.txt'));
-			if (transcriptFiles.length > 1) {
-				throw new Error('文字起こしTXTはフォルダ内に1ファイルだけ置いてください。');
-			}
-			const transcriptFile = transcriptFiles[0];
+			const transcriptFile = source.transcriptFile;
 			const transcriptText = transcriptFile ? await decodeUtf8(transcriptFile) : undefined;
 			const parsedTranscript = transcriptText
 				? parseTranscript(transcriptText, knownLessonIds)
@@ -633,7 +643,7 @@
 		const files = Array.from(input.files ?? []);
 		if (!files.length) return;
 		await prepareImport(
-			files,
+			selectFallbackImportFiles(files),
 			files[0].webkitRelativePath.split('/')[0] || '選択したフォルダ'
 		);
 		input.value = '';
@@ -914,7 +924,7 @@
 				<p class="dialog-copy">この画面を閉じずにお待ちください。</p>
 			{:else}
 				<h2 id="folder-title">教材フォルダを選択してください</h2>
-				<p class="dialog-copy">MP3と、任意の文字起こしTXTを選択できます。TXTの見出しは「[Unit 0.1]」形式です。容量を確認したあと、許可した場合だけ端末内に保存します。</p>
+				<p class="dialog-copy">MP3と、フォルダ直下の transcript.txt を選択できます。文字起こしの見出しは「[Unit 0.1]」形式です。容量を確認したあと、許可した場合だけ端末内に保存します。</p>
 				{#if errorMessage}<p class="error-message">{errorMessage}</p>{/if}
 				<div class="dialog-actions">
 					<button class="primary-action" type="button" onclick={chooseDirectory}>フォルダを選択</button>
