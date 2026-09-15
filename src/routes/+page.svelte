@@ -80,6 +80,7 @@
 	let objectUrls: string[] = [];
 	let developmentPins = $state<Record<string, AudioPin[]>>({});
 	let selectedTrackKinds = $state<Record<string, 'slow' | 'natural'>>({});
+	let transcriptOpenStates = $state<Record<string, boolean>>({});
 	let pinSaveStates = $state<Record<string, boolean>>({});
 	let pinErrors = $state<Record<string, string>>({});
 	let pinSaveVersions: Record<string, number> = {};
@@ -101,6 +102,7 @@
 
 	function releaseAudioUrls() {
 		lastUsedAudio = null;
+		transcriptOpenStates = {};
 		for (const url of objectUrls) URL.revokeObjectURL(url);
 		objectUrls = [];
 		audioEnvelopeCache.clear();
@@ -190,7 +192,7 @@
 
 	function toggleLastUsedAudio(event: KeyboardEvent) {
 		if (event.code !== 'Space') return;
-		if (isTextEntryTarget(event.target)) return;
+		if (isKeyboardControlTarget(event.target)) return;
 		event.preventDefault();
 		event.stopPropagation();
 		if (event.repeat || !lastUsedAudio) return;
@@ -204,16 +206,17 @@
 
 	function preventSpaceDefault(event: KeyboardEvent) {
 		if (event.code !== 'Space') return;
-		if (isTextEntryTarget(event.target)) return;
+		if (isKeyboardControlTarget(event.target)) return;
 		event.preventDefault();
 		event.stopPropagation();
 	}
 
-	function isTextEntryTarget(target: EventTarget | null): boolean {
+	function isKeyboardControlTarget(target: EventTarget | null): boolean {
 		return (
 			target instanceof HTMLInputElement ||
 			target instanceof HTMLTextAreaElement ||
-			(target instanceof HTMLElement && target.isContentEditable)
+			(target instanceof HTMLElement &&
+				(target.isContentEditable || target.closest('button, audio, [role="button"]') !== null))
 		);
 	}
 
@@ -239,6 +242,35 @@
 
 	function hasVisiblePins(track: PlayableTrack, sentences: TranscriptSentence[]): boolean {
 		return sentences.some((sentence) => pinFor(track, sentence.index));
+	}
+
+	function isWithin(target: EventTarget | null, selector: string): boolean {
+		return target instanceof Element && target.closest(selector) !== null;
+	}
+
+	function toggleTranscript(event: MouseEvent | KeyboardEvent, lesson: Lesson) {
+		if (!lesson.transcript) return;
+		if (event instanceof KeyboardEvent) {
+			if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+			event.preventDefault();
+		} else if (isWithin(event.target, 'audio, button, input, label, .transcript')) {
+			return;
+		}
+		const key = lessonId(lesson.unit, lesson.section);
+		transcriptOpenStates[key] = !transcriptOpenStates[key];
+	}
+
+	function activateSentence(
+		event: MouseEvent | KeyboardEvent,
+		track: PlayableTrack,
+		pin: AudioPin
+	) {
+		if (isWithin(event.target, '.sentence-editor')) return;
+		if (event instanceof KeyboardEvent) {
+			if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+			event.preventDefault();
+		}
+		void jumpToPin(track, pin);
 	}
 
 	async function jumpToPin(track: PlayableTrack, pin: AudioPin) {
@@ -670,7 +702,18 @@
 					<div class="lessons">
 						{#each group.lessons as lesson}
 							{@const activeTrack = selectedTrack(lesson)}
-							<div class:single-track={group.unit === 0} class="lesson-row">
+							{@const transcriptKey = lessonId(lesson.unit, lesson.section)}
+							<div
+								class:single-track={group.unit === 0}
+								class:has-transcript={lesson.transcript}
+								class="lesson-row"
+								role="button"
+								tabindex={lesson.transcript ? 0 : -1}
+								aria-disabled={!lesson.transcript}
+								aria-expanded={lesson.transcript ? Boolean(transcriptOpenStates[transcriptKey]) : undefined}
+								onclick={(event) => toggleTranscript(event, lesson)}
+								onkeydown={(event) => toggleTranscript(event, lesson)}
+							>
 								<h2>{lesson.title}</h2>
 
 								{#if lesson.tracks.single}
@@ -685,9 +728,9 @@
 									{@render audioPlayer('Natural', lesson.tracks.natural, `${lesson.title} natural audio`)}
 								{/if}
 
-								{#if lesson.transcript}
-									<details class="transcript">
-										<summary>文字起こしを表示</summary>
+								{#if lesson.transcript && transcriptOpenStates[transcriptKey]}
+									<div class="transcript">
+										<p class="transcript-label">文字起こし</p>
 										{#if lesson.tracks.slow && lesson.tracks.natural}
 											<div class="track-toggle" role="group" aria-label={`${lesson.title} 再生音源`}>
 												<button
@@ -723,14 +766,23 @@
 										<div class="transcript-body">
 											{#each lesson.transcript as sentence}
 												{@const pin = activeTrack ? pinFor(activeTrack, sentence.index) : undefined}
-												<div class="transcript-sentence" style={`padding-left: ${sentence.depth * 22}px`}>
+												<div
+													class:clickable={activeTrack && pin}
+													class="transcript-sentence"
+													style={`padding-left: ${sentence.depth * 22}px`}
+													role="button"
+													tabindex={activeTrack && pin ? 0 : -1}
+													aria-disabled={!activeTrack || !pin}
+													onclick={(event) => activeTrack && pin && activateSentence(event, activeTrack, pin)}
+													onkeydown={(event) => activeTrack && pin && activateSentence(event, activeTrack, pin)}
+												>
 													<div class="sentence-line">
 														<span class="sentence-bullet" aria-hidden="true">–</span>
 														{#if activeTrack && pin}
-															<button class="sentence-jump" type="button" onclick={() => jumpToPin(activeTrack, pin)}>
+															<span class="sentence-jump">
 																<span class="sentence-time">{formatPinTime(pin.atSeconds)}</span>
 																<span>{sentence.text}</span>
-															</button>
+															</span>
 														{:else}
 															<span class="sentence-text">{sentence.text}</span>
 														{/if}
@@ -778,7 +830,7 @@
 										{#if isDevelopment && activeTrack && pinErrors[activeTrack.filename]}
 											<p class="pin-error" aria-live="polite">{pinErrors[activeTrack.filename]}</p>
 										{/if}
-									</details>
+									</div>
 								{/if}
 							</div>
 						{/each}
@@ -1025,24 +1077,35 @@
 		grid-template-columns: 78px minmax(0, 1fr);
 	}
 
+	.lesson-row.has-transcript {
+		cursor: pointer;
+	}
+
+	.lesson-row.has-transcript:focus-visible {
+		outline: 2px solid #2864dc;
+		outline-offset: -2px;
+	}
+
+	.lesson-row.has-transcript audio,
+	.lesson-row.has-transcript button,
+	.lesson-row.has-transcript input,
+	.lesson-row.has-transcript label,
+	.lesson-row.has-transcript .transcript {
+		cursor: auto;
+	}
+
 	.transcript {
 		grid-column: 1 / -1;
 		margin-left: 106px;
 		border-top: 1px solid #e5e5e5;
 	}
 
-	.transcript > summary {
-		width: fit-content;
+	.transcript-label {
+		margin: 0;
 		padding: 10px 0 2px;
 		color: #444;
 		font-size: 0.78rem;
 		font-weight: 650;
-		cursor: pointer;
-	}
-
-	.transcript > summary:focus-visible {
-		outline: 2px solid #2864dc;
-		outline-offset: 3px;
 	}
 
 	.transcript-body {
@@ -1092,6 +1155,20 @@
 		border-top: 1px solid #ededed;
 	}
 
+	.transcript-sentence.clickable {
+		cursor: pointer;
+	}
+
+	.transcript-sentence.clickable:hover .sentence-jump > span:last-child {
+		text-decoration: underline;
+	}
+
+	.transcript-sentence.clickable:focus-visible {
+		border-radius: 2px;
+		outline: 2px solid #2864dc;
+		outline-offset: 2px;
+	}
+
 	.sentence-line {
 		display: flex;
 		align-items: baseline;
@@ -1113,23 +1190,7 @@
 		align-items: baseline;
 		gap: 9px;
 		min-width: 0;
-		padding: 0;
-		border: 0;
-		background: transparent;
 		color: #174ea6;
-		font: inherit;
-		text-align: left;
-		cursor: pointer;
-	}
-
-	.sentence-jump:hover > span:last-child {
-		text-decoration: underline;
-	}
-
-	.sentence-jump:focus-visible {
-		border-radius: 2px;
-		outline: 2px solid #2864dc;
-		outline-offset: 3px;
 	}
 
 	.sentence-time {
@@ -1145,6 +1206,7 @@
 		justify-content: flex-end;
 		gap: 5px;
 		margin: 0;
+		cursor: auto;
 	}
 
 	.sentence-editor label {
