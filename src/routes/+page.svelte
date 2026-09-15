@@ -2,11 +2,25 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { audioCatalog, type AudioKind, type AudioPin } from '$lib/audio-catalog';
 	import {
+		deleteLibrary,
+		getLibraryManifest,
+		importLibrary,
+		readLibraryFiles,
+		type ImportSource,
+		type LocalLibraryManifest
+	} from '$lib/local-library';
+	import {
 		adjustPinToNextOnset,
 		createAudioEnvelope,
 		type AudioEnvelope,
 		type PinAdjustmentResult
 	} from '$lib/audio-onset';
+	import { lessonId, parseTranscript } from '$lib/transcript';
+	import {
+		availableStorageBytes,
+		formatBytes,
+		hasStorageCapacity
+	} from '$lib/storage-capacity';
 
 	type PlayableTrack = {
 		url: string;
@@ -19,6 +33,7 @@
 		unit: number;
 		section: number;
 		tracks: Partial<Record<AudioKind, PlayableTrack>>;
+		transcript?: string;
 	};
 
 	type UnitGroup = {
@@ -26,22 +41,31 @@
 		lessons: Lesson[];
 	};
 
-	const databaseName = 'english-hanon-audio';
-	const storeName = 'settings';
-	const directoryKey = 'audio-directory';
-
 	type PermissionCapableDirectoryHandle = FileSystemDirectoryHandle & {
-		queryPermission: (options?: { mode?: 'read' | 'readwrite' }) => Promise<PermissionState>;
-		requestPermission: (options?: { mode?: 'read' | 'readwrite' }) => Promise<PermissionState>;
 		values: () => AsyncIterableIterator<FileSystemHandle>;
 	};
 
+	type ImportPreview = {
+		audioCount: number;
+		transcriptCount: number;
+		transcriptLessonCount: number;
+		unknownLessonIds: string[];
+		totalBytes: number;
+		availableBytes?: number;
+		hasEnoughSpace: boolean;
+		isReplacement: boolean;
+	};
+
 	let units = $state<UnitGroup[]>([]);
-	let directoryHandle = $state<PermissionCapableDirectoryHandle | null>(null);
 	let folderName = $state('');
-	let phase = $state<'starting' | 'choose' | 'confirm' | 'loading' | 'ready' | 'error'>('starting');
+	let phase = $state<
+		'starting' | 'choose' | 'scanning' | 'review' | 'importing' | 'ready' | 'error'
+	>('starting');
 	let errorMessage = $state('');
 	let fallbackInput: HTMLInputElement;
+	let currentManifest = $state<LocalLibraryManifest | null>(null);
+	let pendingImport = $state<ImportSource | null>(null);
+	let importPreview = $state<ImportPreview | null>(null);
 	let objectUrls: string[] = [];
 	let developmentPins = $state<Record<string, AudioPin[]>>({});
 	let pinDrafts = $state<Record<string, string>>({});
@@ -57,45 +81,14 @@
 	>({});
 	const audioEnvelopeCache = new Map<string, Promise<AudioEnvelope>>();
 	const isDevelopment = import.meta.env.DEV;
-
-	function openDatabase(): Promise<IDBDatabase> {
-		return new Promise((resolve, reject) => {
-			const request = indexedDB.open(databaseName, 1);
-			request.onupgradeneeded = () => {
-				if (!request.result.objectStoreNames.contains(storeName)) {
-					request.result.createObjectStore(storeName);
-				}
-			};
-			request.onsuccess = () => resolve(request.result);
-			request.onerror = () => reject(request.error);
-		});
-	}
-
-	async function getSavedDirectory(): Promise<PermissionCapableDirectoryHandle | null> {
-		const database = await openDatabase();
-		return new Promise((resolve, reject) => {
-			const request = database.transaction(storeName).objectStore(storeName).get(directoryKey);
-			request.onsuccess = () => {
-				database.close();
-				resolve((request.result as PermissionCapableDirectoryHandle | undefined) ?? null);
-			};
-			request.onerror = () => {
-				database.close();
-				reject(request.error);
-			};
-		});
-	}
-
-	async function saveDirectory(handle: PermissionCapableDirectoryHandle): Promise<void> {
-		const database = await openDatabase();
-		await new Promise<void>((resolve, reject) => {
-			const transaction = database.transaction(storeName, 'readwrite');
-			transaction.objectStore(storeName).put(handle, directoryKey);
-			transaction.oncomplete = () => resolve();
-			transaction.onerror = () => reject(transaction.error);
-		});
-		database.close();
-	}
+	const expectedAudioFilenames = audioCatalog.flatMap((group) =>
+		group.lessons.flatMap((lesson) => lesson.tracks.map((track) => track.filename))
+	);
+	const knownLessonIds = new Set(
+		audioCatalog.flatMap((group) =>
+			group.lessons.map((lesson) => lessonId(lesson.unit, lesson.section))
+		)
+	);
 
 	function releaseAudioUrls() {
 		lastUsedAudio = null;
@@ -104,7 +97,7 @@
 		audioEnvelopeCache.clear();
 	}
 
-	function buildUnits(files: File[]): UnitGroup[] {
+	function buildUnits(files: File[], transcripts: Record<string, string> = {}): UnitGroup[] {
 		const filesByName = new Map<string, File>();
 		for (const file of files) {
 			if (filesByName.has(file.name)) {
@@ -131,6 +124,7 @@
 				title: lesson.title,
 				unit: lesson.unit,
 				section: lesson.section,
+				transcript: transcripts[lessonId(lesson.unit, lesson.section)],
 				tracks: Object.fromEntries(
 					lesson.tracks.map((track) => {
 						const url = URL.createObjectURL(filesByName.get(track.filename)!);
@@ -501,40 +495,116 @@
 		if (response.ok) developmentPins = (await response.json()) as Record<string, AudioPin[]>;
 	}
 
-	async function collectAudioFiles(handle: PermissionCapableDirectoryHandle): Promise<File[]> {
+	async function collectImportFiles(handle: PermissionCapableDirectoryHandle): Promise<File[]> {
 		const files: File[] = [];
 		for await (const entry of handle.values()) {
-			if (entry.kind === 'file' && entry.name.toLowerCase().endsWith('.mp3')) {
+			if (
+				entry.kind === 'file' &&
+				(entry.name.toLowerCase().endsWith('.mp3') || entry.name.toLowerCase().endsWith('.txt'))
+			) {
 				files.push(await (entry as FileSystemFileHandle).getFile());
 			} else if (entry.kind === 'directory') {
-				files.push(...(await collectAudioFiles(entry as PermissionCapableDirectoryHandle)));
+				files.push(...(await collectImportFiles(entry as PermissionCapableDirectoryHandle)));
 			}
 		}
 		return files;
 	}
 
-	async function loadDirectory(handle: PermissionCapableDirectoryHandle) {
-		phase = 'loading';
+	async function decodeUtf8(file: File): Promise<string> {
+		try {
+			return new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
+		} catch {
+			throw new Error(`${file.name} をUTF-8テキストとして読み込めませんでした。`);
+		}
+	}
+
+	async function prepareImport(files: File[], selectedFolderName: string) {
+		phase = 'scanning';
 		errorMessage = '';
 		try {
-			let permission = await handle.queryPermission({ mode: 'read' });
-			if (permission !== 'granted') permission = await handle.requestPermission({ mode: 'read' });
-			if (permission !== 'granted') {
-				phase = 'confirm';
-				errorMessage = 'フォルダの読み取り許可が必要です。';
-				return;
+			const audioFilesByName = new Map<string, File>();
+			for (const file of files.filter((candidate) => candidate.name.toLowerCase().endsWith('.mp3'))) {
+				if (audioFilesByName.has(file.name)) {
+					throw new Error(`同名の音声ファイルが複数あります: ${file.name}`);
+				}
+				audioFilesByName.set(file.name, file);
 			}
-			releaseAudioUrls();
-			units = buildUnits(await collectAudioFiles(handle));
-			directoryHandle = handle;
-			folderName = handle.name;
-			phase = 'ready';
+			const missingFiles = expectedAudioFilenames.filter((filename) => !audioFilesByName.has(filename));
+			if (missingFiles.length) {
+				throw new Error(
+					`必要な音声ファイルが見つかりません: ${missingFiles[0]}${missingFiles.length > 1 ? `（ほか${missingFiles.length - 1}件）` : ''}`
+				);
+			}
+
+			const transcriptFiles = files.filter((file) => file.name.toLowerCase().endsWith('.txt'));
+			if (transcriptFiles.length > 1) {
+				throw new Error('文字起こしTXTはフォルダ内に1ファイルだけ置いてください。');
+			}
+			const transcriptFile = transcriptFiles[0];
+			const transcriptText = transcriptFile ? await decodeUtf8(transcriptFile) : undefined;
+			const parsedTranscript = transcriptText
+				? parseTranscript(transcriptText, knownLessonIds)
+				: { transcripts: {}, unknownLessonIds: [] };
+			const audioFiles = expectedAudioFilenames.map((filename) => audioFilesByName.get(filename)!);
+			const totalBytes =
+				audioFiles.reduce((total, file) => total + file.size, 0) + (transcriptFile?.size ?? 0);
+			const estimate: StorageEstimate = await navigator.storage.estimate().catch(() => ({}));
+			const availableBytes = availableStorageBytes(estimate);
+
+			pendingImport = {
+				folderName: selectedFolderName,
+				audioFiles,
+				transcriptFile
+			};
+			importPreview = {
+				audioCount: audioFiles.length,
+				transcriptCount: transcriptFile ? 1 : 0,
+				transcriptLessonCount: Object.keys(parsedTranscript.transcripts).length,
+				unknownLessonIds: parsedTranscript.unknownLessonIds,
+				totalBytes,
+				availableBytes,
+				hasEnoughSpace: hasStorageCapacity(totalBytes, availableBytes),
+				isReplacement: currentManifest !== null
+			};
+			folderName = selectedFolderName;
+			phase = 'review';
 		} catch (error) {
-			releaseAudioUrls();
-			units = [];
 			errorMessage = error instanceof Error ? error.message : 'フォルダを読み込めませんでした。';
 			phase = 'error';
 		}
+	}
+
+	async function loadStoredLibrary(manifest: LocalLibraryManifest) {
+		const stored = await readLibraryFiles(manifest);
+		const transcripts = stored.transcriptText
+			? parseTranscript(stored.transcriptText, knownLessonIds).transcripts
+			: {};
+		releaseAudioUrls();
+		units = buildUnits(stored.audioFiles, transcripts);
+		currentManifest = manifest;
+		folderName = manifest.folderName;
+		phase = 'ready';
+	}
+
+	async function confirmImport() {
+		if (!pendingImport || !importPreview?.hasEnoughSpace) return;
+		phase = 'importing';
+		errorMessage = '';
+		try {
+			await navigator.storage.persist?.().catch(() => false);
+			await loadStoredLibrary(await importLibrary(pendingImport));
+			pendingImport = null;
+			importPreview = null;
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : '教材を端末に保存できませんでした。';
+			phase = 'error';
+		}
+	}
+
+	function cancelImport() {
+		pendingImport = null;
+		importPreview = null;
+		phase = currentManifest ? 'ready' : 'choose';
 	}
 
 	async function chooseDirectory() {
@@ -550,8 +620,7 @@
 
 		try {
 			const handle = (await picker.call(window, { mode: 'read' })) as PermissionCapableDirectoryHandle;
-			await loadDirectory(handle);
-			if (phase === 'ready') await saveDirectory(handle).catch(() => undefined);
+			await prepareImport(await collectImportFiles(handle), handle.name);
 		} catch (error) {
 			if (error instanceof DOMException && error.name === 'AbortError') return;
 			errorMessage = 'フォルダを選択できませんでした。もう一度お試しください。';
@@ -563,35 +632,41 @@
 		const input = event.currentTarget as HTMLInputElement;
 		const files = Array.from(input.files ?? []);
 		if (!files.length) return;
-		folderName = files[0].webkitRelativePath.split('/')[0] || '選択したフォルダ';
-		phase = 'loading';
+		await prepareImport(
+			files,
+			files[0].webkitRelativePath.split('/')[0] || '選択したフォルダ'
+		);
+		input.value = '';
+	}
+
+	async function removeStoredLibrary() {
+		if (!window.confirm('この端末に保存した音声と文字起こしを削除しますか？')) return;
 		try {
 			releaseAudioUrls();
-			units = buildUnits(files);
-			phase = 'ready';
-		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'フォルダを読み込めませんでした。';
+			await deleteLibrary();
+			units = [];
+			currentManifest = null;
+			folderName = '';
+			phase = 'choose';
+		} catch {
+			errorMessage = '端末内の教材を削除できませんでした。';
 			phase = 'error';
 		}
-		input.value = '';
 	}
 
 	onMount(async () => {
 		await loadDevelopmentPins().catch(() => undefined);
-		if (!('showDirectoryPicker' in window)) {
-			phase = 'choose';
-			return;
-		}
 		try {
-			directoryHandle = await getSavedDirectory();
-			if (directoryHandle) {
-				folderName = directoryHandle.name;
-				phase = 'confirm';
-			} else {
-				phase = 'choose';
+			if (!navigator.storage?.getDirectory) {
+				throw new Error('このブラウザは端末内への教材保存に対応していません。');
 			}
+			const manifest = await getLibraryManifest();
+			if (manifest) await loadStoredLibrary(manifest);
+			else phase = 'choose';
 		} catch {
-			phase = 'choose';
+			errorMessage = '保存済みの教材を読み込めませんでした。再度フォルダを選択してください。';
+			currentManifest = null;
+			phase = 'error';
 		}
 	});
 
@@ -723,7 +798,7 @@
 
 <svelte:head>
 	<title>English Hanon Audio</title>
-	<meta name="description" content="English HanonのUnit別Slow・Natural音声プレイヤー" />
+	<meta name="description" content="English Hanonの音声と文字起こしを端末内で利用できるプレイヤー" />
 </svelte:head>
 
 <main>
@@ -731,9 +806,13 @@
 		<div class="header-line">
 			<p class="eyebrow">Audio practice</p>
 			{#if phase === 'ready'}
-				<button class="folder-button" type="button" onclick={chooseDirectory}>
-					{folderName} · 変更
-				</button>
+				<div class="library-actions">
+					<span class="folder-name-inline">{folderName}</span>
+					<button class="folder-button" type="button" onclick={chooseDirectory}>教材を更新</button>
+					<button class="folder-button delete-library-button" type="button" onclick={removeStoredLibrary}
+						>削除</button
+					>
+				</div>
 			{/if}
 		</div>
 		<h1>English Hanon</h1>
@@ -746,7 +825,7 @@
 				<details class="unit">
 					<summary>
 						<span class="unit-name">Unit {group.unit}</span>
-						<span class="item-count">{group.lessons.length} tracks</span>
+						<span class="item-count">{group.lessons.length} sections</span>
 						<span class="chevron" aria-hidden="true"></span>
 					</summary>
 
@@ -766,6 +845,13 @@
 								{#if lesson.tracks.natural}
 									{@render audioPlayer('Natural', lesson.tracks.natural, `${lesson.title} natural audio`)}
 								{/if}
+
+								{#if lesson.transcript}
+									<details class="transcript">
+										<summary>文字起こしを表示</summary>
+										<div class="transcript-body">{lesson.transcript}</div>
+									</details>
+								{/if}
 							</div>
 						{/each}
 					</div>
@@ -778,7 +864,7 @@
 <input
 	class="fallback-input"
 	type="file"
-	accept="audio/mpeg,.mp3"
+	accept="audio/mpeg,.mp3,text/plain,.txt"
 	multiple
 	webkitdirectory={true}
 	bind:this={fallbackInput}
@@ -788,26 +874,54 @@
 {#if phase !== 'ready'}
 	<div class="folder-dialog-backdrop">
 		<div class="folder-dialog" role="dialog" aria-modal="true" aria-labelledby="folder-title">
-			<p class="dialog-eyebrow">Audio source</p>
+			<p class="dialog-eyebrow">Local library</p>
 			{#if phase === 'starting'}
-				<h2 id="folder-title">保存したフォルダを確認中…</h2>
-			{:else if phase === 'confirm'}
-				<h2 id="folder-title">このフォルダでいいですか？</h2>
+				<h2 id="folder-title">保存済みの教材を確認中…</h2>
+			{:else if phase === 'scanning'}
+				<h2 id="folder-title">教材を確認しています…</h2>
+				<p class="dialog-copy">まだ端末内へのコピーは開始していません。</p>
+			{:else if phase === 'review' && importPreview}
+				<h2 id="folder-title">端末に保存しますか？</h2>
 				<p class="folder-name">{folderName}</p>
-				<p class="dialog-copy">前回選択したフォルダから音声を読み込みます。</p>
+				<dl class="storage-summary">
+					<div><dt>音声</dt><dd>{importPreview.audioCount}ファイル</dd></div>
+					<div><dt>文字起こし</dt><dd>{importPreview.transcriptCount ? `${importPreview.transcriptLessonCount}レッスン` : 'なし'}</dd></div>
+					<div class="storage-total"><dt>今回保存する容量</dt><dd>{formatBytes(importPreview.totalBytes)}</dd></div>
+					<div><dt>ブラウザの利用可能容量</dt><dd>{formatBytes(importPreview.availableBytes)}</dd></div>
+				</dl>
+				<p class="dialog-copy">
+					音声と文字起こしはこの端末のブラウザ内だけに保存され、外部には送信されません。
+					{#if importPreview.isReplacement} 更新中は新旧データが一時的に共存するため、上記容量が追加で必要です。{/if}
+				</p>
+				{#if importPreview.unknownLessonIds.length}
+					<p class="warning-message">
+						カタログにない見出しは無視されます: {importPreview.unknownLessonIds.join(', ')}
+					</p>
+				{/if}
+				{#if !importPreview.hasEnoughSpace}
+					<p class="error-message">利用可能容量が不足しているため保存できません。</p>
+				{:else if importPreview.availableBytes === undefined}
+					<p class="warning-message">利用可能容量を取得できませんでした。保存中に容量不足となる場合があります。</p>
+				{/if}
+				<div class="dialog-actions">
+					<button class="primary-action" type="button" disabled={!importPreview.hasEnoughSpace} onclick={confirmImport}
+						>{importPreview.isReplacement ? '更新する' : '取り込む'}</button
+					>
+					<button class="secondary-action" type="button" onclick={cancelImport}>キャンセル</button>
+				</div>
+			{:else if phase === 'importing'}
+				<h2 id="folder-title">端末に保存しています…</h2>
+				<p class="dialog-copy">この画面を閉じずにお待ちください。</p>
+			{:else}
+				<h2 id="folder-title">教材フォルダを選択してください</h2>
+				<p class="dialog-copy">MP3と、任意の文字起こしTXTを選択できます。TXTの見出しは「[Unit 0.1]」形式です。容量を確認したあと、許可した場合だけ端末内に保存します。</p>
 				{#if errorMessage}<p class="error-message">{errorMessage}</p>{/if}
 				<div class="dialog-actions">
-					<button class="primary-action" type="button" onclick={() => directoryHandle && loadDirectory(directoryHandle)}>このフォルダを使う</button>
-					<button class="secondary-action" type="button" onclick={chooseDirectory}>別のフォルダを選ぶ</button>
+					<button class="primary-action" type="button" onclick={chooseDirectory}>フォルダを選択</button>
+					{#if currentManifest}
+						<button class="secondary-action" type="button" onclick={() => (phase = 'ready')}>戻る</button>
+					{/if}
 				</div>
-			{:else if phase === 'loading'}
-				<h2 id="folder-title">音声を読み込んでいます…</h2>
-				<p class="dialog-copy">フォルダ内のMP3ファイルを準備しています。</p>
-			{:else}
-				<h2 id="folder-title">音声フォルダを選択してください</h2>
-				<p class="dialog-copy">MP3ファイルはブラウザ内でのみ読み込みます。外部には送信されません。</p>
-				{#if errorMessage}<p class="error-message">{errorMessage}</p>{/if}
-				<button class="primary-action" type="button" onclick={chooseDirectory}>フォルダを選択</button>
 			{/if}
 		</div>
 	</div>
@@ -847,6 +961,23 @@
 		margin-bottom: 12px;
 	}
 
+	.library-actions {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 12px;
+		min-width: 0;
+	}
+
+	.folder-name-inline {
+		max-width: min(32vw, 280px);
+		overflow: hidden;
+		color: #555;
+		font-size: 0.78rem;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
 	.eyebrow {
 		margin: 0;
 		font-size: 0.72rem;
@@ -856,15 +987,12 @@
 	}
 
 	.folder-button {
-		max-width: min(50vw, 360px);
 		padding: 6px 0;
-		overflow: hidden;
 		border: 0;
 		background: transparent;
 		color: #555;
 		font: inherit;
 		font-size: 0.78rem;
-		text-overflow: ellipsis;
 		white-space: nowrap;
 		cursor: pointer;
 	}
@@ -872,6 +1000,10 @@
 	.folder-button:hover {
 		color: #111;
 		text-decoration: underline;
+	}
+
+	.delete-library-button {
+		color: #9d2222;
 	}
 
 	h1 {
@@ -898,7 +1030,7 @@
 		border-bottom: 1px solid #111;
 	}
 
-	summary {
+	.unit > summary {
 		display: grid;
 		grid-template-columns: 1fr auto 18px;
 		align-items: center;
@@ -909,11 +1041,11 @@
 		list-style: none;
 	}
 
-	summary::-webkit-details-marker {
+	.unit > summary::-webkit-details-marker {
 		display: none;
 	}
 
-	summary:focus-visible {
+	.unit > summary:focus-visible {
 		outline: 2px solid #111;
 		outline-offset: -2px;
 	}
@@ -963,6 +1095,35 @@
 
 	.lesson-row.single-track {
 		grid-template-columns: 78px minmax(0, 1fr);
+	}
+
+	.transcript {
+		grid-column: 1 / -1;
+		margin-left: 106px;
+		border-top: 1px solid #e5e5e5;
+	}
+
+	.transcript > summary {
+		width: fit-content;
+		padding: 10px 0 2px;
+		color: #444;
+		font-size: 0.78rem;
+		font-weight: 650;
+		cursor: pointer;
+	}
+
+	.transcript > summary:focus-visible {
+		outline: 2px solid #2864dc;
+		outline-offset: 3px;
+	}
+
+	.transcript-body {
+		max-width: 760px;
+		padding: 14px 0 4px;
+		color: #222;
+		font-size: 0.92rem;
+		line-height: 1.8;
+		white-space: pre-wrap;
 	}
 
 	h2 {
@@ -1232,7 +1393,8 @@
 	}
 
 	.dialog-copy,
-	.error-message {
+	.error-message,
+	.warning-message {
 		margin: 18px 0 0;
 		color: #555;
 		font-size: 0.88rem;
@@ -1241,6 +1403,39 @@
 
 	.error-message {
 		color: #a12618;
+	}
+
+	.warning-message {
+		color: #765500;
+	}
+
+	.storage-summary {
+		margin: 24px 0 0;
+		border-top: 1px solid #ccc;
+	}
+
+	.storage-summary div {
+		display: flex;
+		justify-content: space-between;
+		gap: 24px;
+		padding: 10px 0;
+		border-bottom: 1px solid #ddd;
+	}
+
+	.storage-summary dt,
+	.storage-summary dd {
+		margin: 0;
+		font-size: 0.82rem;
+	}
+
+	.storage-summary dd {
+		font-weight: 650;
+		font-variant-numeric: tabular-nums;
+		text-align: right;
+	}
+
+	.storage-summary .storage-total {
+		font-weight: 700;
 	}
 
 	.dialog-actions {
@@ -1280,6 +1475,12 @@
 		background: #333;
 	}
 
+	.primary-action:disabled {
+		border-color: #aaa;
+		background: #aaa;
+		cursor: not-allowed;
+	}
+
 	.secondary-action:hover {
 		background: #f2f2f2;
 	}
@@ -1308,7 +1509,7 @@
 			flex-direction: column;
 		}
 
-		summary {
+		.unit > summary {
 			min-height: 68px;
 			gap: 14px;
 		}
@@ -1318,6 +1519,10 @@
 			grid-template-columns: 1fr;
 			gap: 16px;
 			padding: 22px 4px 26px;
+		}
+
+		.transcript {
+			margin-left: 0;
 		}
 
 		.player {
