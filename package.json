@@ -6,6 +6,7 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
+		"verify:production": "npm run build && node scripts/verify-production-build.mjs",
 		"test": "node --experimental-strip-types --test src/lib/*.test.ts",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",

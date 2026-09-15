@@ -1,7 +1,6 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, type Component } from 'svelte';
 	import { audioCatalog, type AudioKind, type AudioPin } from '$lib/audio-catalog';
-	import { upsertPin } from '$lib/audio-pin';
 	import {
 		deleteLibrary,
 		getLibraryManifest,
@@ -10,16 +9,8 @@
 		type ImportSource,
 		type LocalLibraryManifest
 	} from '$lib/local-library';
-	import {
-		adjustPinToNextOnset,
-		createAudioEnvelope,
-		findAdjacentPinPosition,
-		findStandardPinPositions,
-		type AudioEnvelope,
-		type PinAdjustmentResult,
-		type PinPositionDirection
-	} from '$lib/audio-onset';
 	import { lessonId, parseTranscript, type TranscriptSentence } from '$lib/transcript';
+	import type { PlayableTrack } from '$lib/player-types';
 	import {
 		availableStorageBytes,
 		formatBytes,
@@ -30,12 +21,6 @@
 		isTranscriptFilename,
 		selectFallbackImportFiles
 	} from '$lib/import-source';
-
-	type PlayableTrack = {
-		url: string;
-		filename: string;
-		pins: AudioPin[];
-	};
 
 	type Lesson = {
 		title: string;
@@ -81,27 +66,15 @@
 	let pendingImport = $state<ImportSource | null>(null);
 	let importPreview = $state<ImportPreview | null>(null);
 	let objectUrls: string[] = [];
-	let developmentPins = $state<Record<string, AudioPin[]>>({});
 	let selectedTrackKinds = $state<Record<string, 'slow' | 'natural'>>({});
 	let transcriptOpenStates = $state<Record<string, boolean>>({});
-	let pinSaveStates = $state<Record<string, boolean>>({});
-	let pinErrors = $state<Record<string, string>>({});
-	let pinSaveVersions: Record<string, number> = {};
-	let pinDeleteStates = $state<Record<string, boolean>>({});
 	let lastUsedAudio: HTMLAudioElement | null = null;
-	let adjustmentStates = $state<
-		Record<string, { busy: boolean; message: string; hasError: boolean }>
-	>({});
-	let standardPositionStates = $state<
-		Record<
-			string,
-			| { status: 'loading'; sourceUrl: string }
-			| { status: 'ready'; sourceUrl: string; positions: number[] }
-			| { status: 'error'; sourceUrl: string }
-		>
-	>({});
-	const audioEnvelopeCache = new Map<string, Promise<AudioEnvelope>>();
 	const isDevelopment = import.meta.env.DEV;
+	let mode = $state<'view' | 'edit'>('view');
+	let PinEditor = $state<Component<{
+		track: PlayableTrack;
+		sentences: TranscriptSentence[];
+	}> | null>(null);
 	const expectedAudioFilenames = audioCatalog.flatMap((group) =>
 		group.lessons.flatMap((lesson) => lesson.tracks.map((track) => track.filename))
 	);
@@ -116,9 +89,6 @@
 		transcriptOpenStates = {};
 		for (const url of objectUrls) URL.revokeObjectURL(url);
 		objectUrls = [];
-		audioEnvelopeCache.clear();
-		adjustmentStates = {};
-		standardPositionStates = {};
 	}
 
 	function buildUnits(
@@ -161,7 +131,7 @@
 							{
 								url,
 								filename: track.filename,
-								pins: developmentPins[track.filename] ?? track.pins
+								pins: track.pins
 							}
 						];
 					})
@@ -233,10 +203,6 @@
 		);
 	}
 
-	function pinStateKey(track: PlayableTrack, sentenceIndex: number): string {
-		return `${track.filename}\u0000${sentenceIndex}`;
-	}
-
 	function audioForTrack(track: PlayableTrack): HTMLAudioElement | null {
 		for (const audio of document.querySelectorAll<HTMLAudioElement>('audio[data-filename]')) {
 			if (audio.dataset.filename === track.filename) return audio;
@@ -252,24 +218,10 @@
 	function selectTrack(lesson: Lesson, kind: 'slow' | 'natural') {
 		const key = lessonId(lesson.unit, lesson.section);
 		selectedTrackKinds[key] = kind;
-		const track = lesson.tracks[kind];
-		if (
-			isDevelopment &&
-			transcriptOpenStates[key] &&
-			track &&
-			lesson.transcript &&
-			hasVisiblePins(track, lesson.transcript)
-		) {
-			void loadStandardPositions(track);
-		}
 	}
 
 	function pinFor(track: PlayableTrack, sentenceIndex: number): AudioPin | undefined {
 		return track.pins.find((pin) => pin.sentenceIndex === sentenceIndex);
-	}
-
-	function hasVisiblePins(track: PlayableTrack, sentences: TranscriptSentence[]): boolean {
-		return sentences.some((sentence) => pinFor(track, sentence.index));
 	}
 
 	function isWithin(target: EventTarget | null, selector: string): boolean {
@@ -285,18 +237,7 @@
 			return;
 		}
 		const key = lessonId(lesson.unit, lesson.section);
-		const isOpen = !transcriptOpenStates[key];
-		transcriptOpenStates[key] = isOpen;
-		const track = selectedTrack(lesson);
-		if (
-			isDevelopment &&
-			isOpen &&
-			track &&
-			lesson.transcript &&
-			hasVisiblePins(track, lesson.transcript)
-		) {
-			void loadStandardPositions(track);
-		}
+		transcriptOpenStates[key] = !transcriptOpenStates[key];
 	}
 
 	function activateSentence(
@@ -304,7 +245,6 @@
 		track: PlayableTrack,
 		pin: AudioPin
 	) {
-		if (isWithin(event.target, '.sentence-editor')) return;
 		if (event instanceof KeyboardEvent) {
 			if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
 			event.preventDefault();
@@ -320,230 +260,13 @@
 		await audio.play().catch(() => undefined);
 	}
 
-	async function savePinTime(track: PlayableTrack, sentenceIndex: number, atSeconds: number) {
-		const saveKey = pinStateKey(track, sentenceIndex);
-		const previousPins = track.pins;
-		const saveVersion = (pinSaveVersions[saveKey] ?? 0) + 1;
-		pinSaveVersions[saveKey] = saveVersion;
-		pinSaveStates[saveKey] = true;
-		track.pins = upsertPin(track.pins, { sentenceIndex, atSeconds });
-		try {
-			const response = await fetch('/api/pins', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ filename: track.filename, sentenceIndex, atSeconds })
-			});
-			if (!response.ok) throw new Error(await response.text());
-			const result = (await response.json()) as { pins: AudioPin[] };
-			if (pinSaveVersions[saveKey] !== saveVersion) return;
-			track.pins = result.pins;
-			developmentPins[track.filename] = result.pins;
-			void loadStandardPositions(track);
-		} catch {
-			if (pinSaveVersions[saveKey] !== saveVersion) return;
-			track.pins = previousPins;
-			throw new Error('Pin time could not be saved.');
-		} finally {
-			if (pinSaveVersions[saveKey] === saveVersion) pinSaveStates[saveKey] = false;
-		}
-	}
-
-	async function saveCurrentPosition(track: PlayableTrack, sentenceIndex: number) {
-		const audio = audioForTrack(track);
-		if (!audio) return;
-		pinErrors[track.filename] = '';
-		try {
-			await savePinTime(track, sentenceIndex, Math.round(audio.currentTime * 10) / 10);
-		} catch {
-			pinErrors[track.filename] = 'ピンを保存できませんでした。';
-		}
-	}
-
-	async function updatePinTime(event: Event, track: PlayableTrack, sentenceIndex: number) {
-		const input = event.currentTarget;
-		if (!(input instanceof HTMLInputElement) || !input.value || !input.validity.valid) return;
-
-		const atSeconds = Math.round(input.valueAsNumber * 10) / 10;
-		if (atSeconds === pinFor(track, sentenceIndex)?.atSeconds) return;
-		pinErrors[track.filename] = '';
-		try {
-			await savePinTime(track, sentenceIndex, atSeconds);
-		} catch {
-			pinErrors[track.filename] = 'ピンの秒数を変更できませんでした。';
-		}
-	}
-
-	async function deletePin(track: PlayableTrack, sentence: TranscriptSentence) {
-		if (!window.confirm(`「${sentence.text}」のピンを削除しますか？`)) return;
-
-		const deleteKey = pinStateKey(track, sentence.index);
-		pinDeleteStates[deleteKey] = true;
-		pinErrors[track.filename] = '';
-		try {
-			const response = await fetch('/api/pins', {
-				method: 'DELETE',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ filename: track.filename, sentenceIndex: sentence.index })
-			});
-			if (!response.ok) throw new Error(await response.text());
-			const result = (await response.json()) as { pins: AudioPin[] };
-			track.pins = result.pins;
-			developmentPins[track.filename] = result.pins;
-		} catch {
-			pinErrors[track.filename] = 'ピンを削除できませんでした。';
-		} finally {
-			pinDeleteStates[deleteKey] = false;
-		}
-	}
-
-	async function getAudioEnvelope(track: PlayableTrack): Promise<AudioEnvelope> {
-		const cachedEnvelope = audioEnvelopeCache.get(track.filename);
-		if (cachedEnvelope) return cachedEnvelope;
-
-		const envelopePromise = (async () => {
-			const response = await fetch(track.url);
-			if (!response.ok) throw new Error('Audio could not be read.');
-			const context = new AudioContext();
-			try {
-				const audioBuffer = await context.decodeAudioData(await response.arrayBuffer());
-				const channels = Array.from({ length: audioBuffer.numberOfChannels }, (_, index) =>
-					audioBuffer.getChannelData(index)
-				);
-				return createAudioEnvelope(channels, audioBuffer.sampleRate);
-			} finally {
-				await context.close();
-			}
-		})();
-		audioEnvelopeCache.set(track.filename, envelopePromise);
-		try {
-			return await envelopePromise;
-		} catch (error) {
-			audioEnvelopeCache.delete(track.filename);
-			throw error;
-		}
-	}
-
-	async function loadStandardPositions(track: PlayableTrack) {
-		const currentState = standardPositionStates[track.filename];
-		if (
-			currentState?.sourceUrl === track.url &&
-			(currentState.status === 'loading' || currentState.status === 'ready')
-		) {
+	async function selectMode(nextMode: 'view' | 'edit') {
+		if (!isDevelopment || nextMode === 'view') {
+			mode = 'view';
 			return;
 		}
-
-		standardPositionStates[track.filename] = { status: 'loading', sourceUrl: track.url };
-		adjustmentStates[track.filename] = {
-			busy: true,
-			message: '規定位置を解析中…',
-			hasError: false
-		};
-		try {
-			const positions = findStandardPinPositions(await getAudioEnvelope(track));
-			if (standardPositionStates[track.filename]?.sourceUrl !== track.url) return;
-			standardPositionStates[track.filename] = {
-				status: 'ready',
-				sourceUrl: track.url,
-				positions
-			};
-			adjustmentStates[track.filename] = { busy: false, message: '', hasError: false };
-		} catch {
-			if (standardPositionStates[track.filename]?.sourceUrl !== track.url) return;
-			standardPositionStates[track.filename] = { status: 'error', sourceUrl: track.url };
-			adjustmentStates[track.filename] = {
-				busy: false,
-				message: '規定位置を解析できませんでした。',
-				hasError: true
-			};
-		}
-	}
-
-	function adjacentStandardPosition(
-		track: PlayableTrack,
-		pin: AudioPin,
-		direction: PinPositionDirection
-	): number | undefined {
-		const state = standardPositionStates[track.filename];
-		return state?.status === 'ready' && state.sourceUrl === track.url
-			? findAdjacentPinPosition(state.positions, pin.atSeconds, direction)
-			: undefined;
-	}
-
-	async function movePinToStandardPosition(
-		track: PlayableTrack,
-		pin: AudioPin,
-		direction: PinPositionDirection
-	) {
-		if (adjustmentStates[track.filename]?.busy) return;
-		const atSeconds = adjacentStandardPosition(track, pin, direction);
-		if (atSeconds === undefined) return;
-
-		adjustmentStates[track.filename] = { busy: true, message: 'ピンを保存中…', hasError: false };
-		try {
-			await savePinTime(track, pin.sentenceIndex, atSeconds);
-			const audio = audioForTrack(track);
-			if (audio) {
-				audio.pause();
-				audio.currentTime = atSeconds;
-				lastUsedAudio = audio;
-			}
-			adjustmentStates[track.filename] = {
-				busy: false,
-				message: `文${pin.sentenceIndex + 1}: ${formatPinTime(atSeconds)}へ移動しました。`,
-				hasError: false
-			};
-		} catch {
-			adjustmentStates[track.filename] = {
-				busy: false,
-				message: `文${pin.sentenceIndex + 1}: ピンを移動できませんでした。`,
-				hasError: true
-			};
-		}
-	}
-
-	function adjustmentFailureMessage(pin: AudioPin, result: PinAdjustmentResult): string {
-		const description = `文${pin.sentenceIndex + 1}`;
-		return result.ok
-			? ''
-			: result.reason === 'pin-in-sound'
-				? `${description}: ピン位置ですでに音が出ています。`
-				: `${description}: 次の音を検出できませんでした。`;
-	}
-
-	async function adjustSinglePin(track: PlayableTrack, pin: AudioPin) {
-		if (adjustmentStates[track.filename]?.busy) return;
-		adjustmentStates[track.filename] = { busy: true, message: '音声を解析中…', hasError: false };
-		try {
-			const result = adjustPinToNextOnset(await getAudioEnvelope(track), pin.atSeconds);
-			if (!result.ok) {
-				adjustmentStates[track.filename] = {
-					busy: false,
-					message: adjustmentFailureMessage(pin, result),
-					hasError: true
-				};
-				return;
-			}
-			if (result.atSeconds !== pin.atSeconds) {
-				await savePinTime(track, pin.sentenceIndex, result.atSeconds);
-			}
-			adjustmentStates[track.filename] = {
-				busy: false,
-				message: `文${pin.sentenceIndex + 1}: ${formatPinTime(result.atSeconds)}に調整しました。`,
-				hasError: false
-			};
-		} catch {
-			adjustmentStates[track.filename] = {
-				busy: false,
-				message: `文${pin.sentenceIndex + 1}: 音声の解析または保存に失敗しました。`,
-				hasError: true
-			};
-		}
-	}
-
-	async function loadDevelopmentPins() {
-		if (!isDevelopment) return;
-		const response = await fetch('/api/pins');
-		if (response.ok) developmentPins = (await response.json()) as Record<string, AudioPin[]>;
+		PinEditor ??= (await import('../dev/PinEditor.svelte')).default;
+		mode = 'edit';
 	}
 
 	async function collectImportFiles(
@@ -706,7 +429,6 @@
 	}
 
 	onMount(async () => {
-		await loadDevelopmentPins().catch(() => undefined);
 		try {
 			if (!navigator.storage?.getDirectory) {
 				throw new Error('このブラウザは端末内への教材保存に対応していません。');
@@ -758,6 +480,12 @@
 			<p class="eyebrow">Audio practice</p>
 			{#if phase === 'ready'}
 				<div class="library-actions">
+					{#if isDevelopment}
+						<div class="mode-toggle" role="group" aria-label="表示モード">
+							<button class:active={mode === 'view'} type="button" aria-pressed={mode === 'view'} onclick={() => selectMode('view')}>閲覧</button>
+							<button class:active={mode === 'edit'} type="button" aria-pressed={mode === 'edit'} onclick={() => selectMode('edit')}>編集</button>
+						</div>
+					{/if}
 					<span class="folder-name-inline">{folderName}</span>
 					<button class="folder-button" type="button" onclick={chooseDirectory}>教材を更新</button>
 					<button class="folder-button delete-library-button" type="button" onclick={removeStoredLibrary}
@@ -830,13 +558,6 @@
 												>Natural</button>
 											</div>
 										{/if}
-										{#if isDevelopment && activeTrack && adjustmentStates[activeTrack.filename]?.message}
-											<div class="track-adjustment">
-												<p class:adjustment-error={adjustmentStates[activeTrack.filename]?.hasError} aria-live="polite">
-													{adjustmentStates[activeTrack.filename].message}
-												</p>
-											</div>
-										{/if}
 										<div class="transcript-body">
 											{#each lesson.transcript as sentence}
 												{@const pin = activeTrack ? pinFor(activeTrack, sentence.index) : undefined}
@@ -861,64 +582,11 @@
 															<span class="sentence-text">{sentence.text}</span>
 														{/if}
 													</div>
-													{#if isDevelopment && activeTrack}
-														<div class="sentence-editor">
-															<button
-																type="button"
-																disabled={pinSaveStates[pinStateKey(activeTrack, sentence.index)]}
-																onclick={() => saveCurrentPosition(activeTrack, sentence.index)}
-															>
-																{pinSaveStates[pinStateKey(activeTrack, sentence.index)] ? '保存中…' : pin ? '現在位置で更新' : '現在位置を保存'}
-															</button>
-															<label>
-																<span class="visually-hidden">{sentence.text}の秒数</span>
-																<input
-																	type="number"
-																	min="0"
-																	step="0.1"
-																	placeholder="秒"
-																	value={pin?.atSeconds ?? ''}
-																	disabled={pinSaveStates[pinStateKey(activeTrack, sentence.index)]}
-																	onchange={(event) => updatePinTime(event, activeTrack, sentence.index)}
-																/>
-																<span class="seconds-unit">秒</span>
-															</label>
-															{#if pin}
-																<button
-																	type="button"
-																	disabled={adjustmentStates[activeTrack.filename]?.busy || pinDeleteStates[pinStateKey(activeTrack, sentence.index)]}
-																	onclick={() => adjustSinglePin(activeTrack, pin)}
-																>音に合わせる</button>
-																<button
-																	type="button"
-																	disabled={adjustmentStates[activeTrack.filename]?.busy ||
-																		pinSaveStates[pinStateKey(activeTrack, sentence.index)] ||
-																		pinDeleteStates[pinStateKey(activeTrack, sentence.index)] ||
-																		adjacentStandardPosition(activeTrack, pin, 'previous') === undefined}
-																	onclick={() => movePinToStandardPosition(activeTrack, pin, 'previous')}
-																>前の規定位置</button>
-																<button
-																	type="button"
-																	disabled={adjustmentStates[activeTrack.filename]?.busy ||
-																		pinSaveStates[pinStateKey(activeTrack, sentence.index)] ||
-																		pinDeleteStates[pinStateKey(activeTrack, sentence.index)] ||
-																		adjacentStandardPosition(activeTrack, pin, 'next') === undefined}
-																	onclick={() => movePinToStandardPosition(activeTrack, pin, 'next')}
-																>次の規定位置</button>
-																<button
-																	class="delete-pin"
-																	type="button"
-																	disabled={pinDeleteStates[pinStateKey(activeTrack, sentence.index)]}
-																	onclick={() => deletePin(activeTrack, sentence)}
-																>{pinDeleteStates[pinStateKey(activeTrack, sentence.index)] ? '削除中…' : '削除'}</button>
-															{/if}
-														</div>
-													{/if}
-												</div>
-											{/each}
-										</div>
-										{#if isDevelopment && activeTrack && pinErrors[activeTrack.filename]}
-											<p class="pin-error" aria-live="polite">{pinErrors[activeTrack.filename]}</p>
+											</div>
+										{/each}
+									</div>
+										{#if mode === 'edit' && PinEditor && activeTrack}
+											<PinEditor track={activeTrack} sentences={lesson.transcript} />
 										{/if}
 									</div>
 								{/if}
@@ -1037,6 +705,32 @@
 		justify-content: flex-end;
 		gap: 12px;
 		min-width: 0;
+	}
+
+	.mode-toggle {
+		display: flex;
+		border: 1px solid #aaa;
+		border-radius: 999px;
+		overflow: hidden;
+	}
+
+	.mode-toggle button {
+		padding: 5px 10px;
+		border: 0;
+		background: #fff;
+		color: #555;
+		font: inherit;
+		font-size: 0.72rem;
+		cursor: pointer;
+	}
+
+	.mode-toggle button + button {
+		border-left: 1px solid #aaa;
+	}
+
+	.mode-toggle button.active {
+		background: #111;
+		color: #fff;
 	}
 
 	.folder-name-inline {
@@ -1236,7 +930,7 @@
 
 	.transcript-sentence {
 		display: grid;
-		grid-template-columns: minmax(220px, 1fr) auto;
+		grid-template-columns: minmax(0, 1fr);
 		align-items: start;
 		column-gap: 16px;
 		padding-top: 8px;
@@ -1289,61 +983,6 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	.sentence-editor {
-		display: flex;
-		align-items: center;
-		justify-content: flex-end;
-		gap: 5px;
-		margin: 0;
-		cursor: auto;
-	}
-
-	.sentence-editor label {
-		display: flex;
-		align-items: center;
-		gap: 3px;
-	}
-
-	.sentence-editor input {
-		width: 72px;
-		height: 30px;
-		padding: 0 5px;
-		border: 1px solid #bbb;
-		font: inherit;
-		font-size: 0.74rem;
-		font-variant-numeric: tabular-nums;
-	}
-
-	.sentence-editor button {
-		min-height: 30px;
-		padding: 0 8px;
-		border: 1px solid #999;
-		background: #fff;
-		color: #222;
-		font: inherit;
-		font-size: 0.7rem;
-		cursor: pointer;
-	}
-
-	.sentence-editor button:hover {
-		border-color: #111;
-	}
-
-	.sentence-editor button:disabled {
-		color: #777;
-		cursor: default;
-	}
-
-	.sentence-editor .delete-pin {
-		border-color: #c8a3a3;
-		color: #9d2222;
-	}
-
-	.seconds-unit {
-		color: #666;
-		font-size: 0.7rem;
-	}
-
 	h2 {
 		margin: 0;
 		font-size: 0.88rem;
@@ -1365,43 +1004,6 @@
 		font-weight: 600;
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
-	}
-
-	.track-adjustment {
-		display: flex;
-		grid-column: 2;
-		align-items: center;
-		flex-wrap: wrap;
-		gap: 8px;
-	}
-
-	.track-adjustment p {
-		margin: 0;
-		color: #555;
-		font-size: 0.72rem;
-		line-height: 1.5;
-	}
-
-	.track-adjustment p.adjustment-error {
-		color: #a12618;
-	}
-
-	.visually-hidden {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		padding: 0;
-		overflow: hidden;
-		clip: rect(0, 0, 0, 0);
-		white-space: nowrap;
-		border: 0;
-	}
-
-	.pin-error {
-		grid-column: 1 / -1;
-		margin: 0;
-		color: #a12618;
-		font-size: 0.72rem;
 	}
 
 	audio {
@@ -1601,12 +1203,6 @@
 			row-gap: 7px;
 		}
 
-		.sentence-editor {
-			justify-content: flex-start;
-			flex-wrap: wrap;
-			margin-left: 18px;
-		}
-
 		.player {
 			grid-template-columns: 1fr;
 			gap: 7px;
@@ -1616,9 +1212,6 @@
 			padding-left: 2px;
 		}
 
-		.track-adjustment {
-			grid-column: 1;
-		}
 	}
 
 	@media (prefers-reduced-motion: reduce) {

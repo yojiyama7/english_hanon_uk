@@ -2,7 +2,7 @@ import adapter from '@sveltejs/adapter-auto';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig, searchForWorkspaceRoot } from 'vite';
 
-export default defineConfig({
+export default defineConfig(async ({ command }) => ({
 	server: {
 		fs: {
 			allow: [searchForWorkspaceRoot(new URL('.', import.meta.url).pathname)]
@@ -11,6 +11,7 @@ export default defineConfig({
 		watch: { ignored: ['**/src/lib/audio-pins.json'] }
 	},
 	plugins: [
+		...(command === 'serve' ? [(await import('./src/dev/pins-api.ts')).devPinsApi()] : []),
 		sveltekit({
 			compilerOptions: {
 				// Force runes mode for the project, except for libraries. Can be removed in svelte 6.
@@ -24,4 +25,4 @@ export default defineConfig({
 			adapter: adapter()
 		})
 	]
-});
+}));
