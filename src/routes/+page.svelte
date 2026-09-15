@@ -703,30 +703,32 @@
 						{#each group.lessons as lesson}
 							{@const activeTrack = selectedTrack(lesson)}
 							{@const transcriptKey = lessonId(lesson.unit, lesson.section)}
-							<div
-								class:single-track={group.unit === 0}
-								class:has-transcript={lesson.transcript}
-								class="lesson-row"
-								role="button"
-								tabindex={lesson.transcript ? 0 : -1}
-								aria-disabled={!lesson.transcript}
-								aria-expanded={lesson.transcript ? Boolean(transcriptOpenStates[transcriptKey]) : undefined}
-								onclick={(event) => toggleTranscript(event, lesson)}
-								onkeydown={(event) => toggleTranscript(event, lesson)}
-							>
-								<h2>{lesson.title}</h2>
+							<div class="lesson-row">
+								<div
+									class:single-track={group.unit === 0}
+									class:has-transcript={lesson.transcript}
+									class="lesson-overview"
+									role="button"
+									tabindex={lesson.transcript ? 0 : -1}
+									aria-disabled={!lesson.transcript}
+									aria-expanded={lesson.transcript ? Boolean(transcriptOpenStates[transcriptKey]) : undefined}
+									onclick={(event) => toggleTranscript(event, lesson)}
+									onkeydown={(event) => toggleTranscript(event, lesson)}
+								>
+									<h2>{lesson.title}</h2>
 
-								{#if lesson.tracks.single}
-									{@render audioPlayer('Audio', lesson.tracks.single, `${lesson.title} audio`)}
-								{/if}
+									{#if lesson.tracks.single}
+										{@render audioPlayer('Audio', lesson.tracks.single, `${lesson.title} audio`)}
+									{/if}
 
-								{#if lesson.tracks.slow}
-									{@render audioPlayer('Slow', lesson.tracks.slow, `${lesson.title} slow audio`)}
-								{/if}
+									{#if lesson.tracks.slow}
+										{@render audioPlayer('Slow', lesson.tracks.slow, `${lesson.title} slow audio`)}
+									{/if}
 
-								{#if lesson.tracks.natural}
-									{@render audioPlayer('Natural', lesson.tracks.natural, `${lesson.title} natural audio`)}
-								{/if}
+									{#if lesson.tracks.natural}
+										{@render audioPlayer('Natural', lesson.tracks.natural, `${lesson.title} natural audio`)}
+									{/if}
+								</div>
 
 								{#if lesson.transcript && transcriptOpenStates[transcriptKey]}
 									<div class="transcript">
@@ -1061,41 +1063,40 @@
 	}
 
 	.lesson-row {
+		padding: 22px 4px;
+		border-bottom: 1px solid #e5e5e5;
+	}
+
+	.lesson-overview {
 		display: grid;
 		grid-template-columns: 78px minmax(0, 1fr) minmax(0, 1fr);
 		gap: 28px;
 		align-items: center;
-		padding: 22px 4px;
-		border-bottom: 1px solid #e5e5e5;
 	}
 
 	.lesson-row:last-child {
 		border-bottom: 0;
 	}
 
-	.lesson-row.single-track {
+	.lesson-overview.single-track {
 		grid-template-columns: 78px minmax(0, 1fr);
 	}
 
-	.lesson-row.has-transcript {
+	.lesson-overview.has-transcript {
 		cursor: pointer;
 	}
 
-	.lesson-row.has-transcript:focus-visible {
+	.lesson-overview.has-transcript:focus-visible {
 		outline: 2px solid #2864dc;
 		outline-offset: -2px;
 	}
 
-	.lesson-row.has-transcript audio,
-	.lesson-row.has-transcript button,
-	.lesson-row.has-transcript input,
-	.lesson-row.has-transcript label,
-	.lesson-row.has-transcript .transcript {
+	.lesson-overview.has-transcript audio {
 		cursor: auto;
 	}
 
 	.transcript {
-		grid-column: 1 / -1;
+		margin-top: 22px;
 		margin-left: 106px;
 		border-top: 1px solid #e5e5e5;
 	}
@@ -1496,10 +1497,13 @@
 			gap: 14px;
 		}
 
-		.lesson-row,
-		.lesson-row.single-track {
+		.lesson-overview,
+		.lesson-overview.single-track {
 			grid-template-columns: 1fr;
 			gap: 16px;
+		}
+
+		.lesson-row {
 			padding: 22px 4px 26px;
 		}
 
