@@ -1,9 +1,16 @@
+export type TranscriptSentence = {
+	index: number;
+	text: string;
+	depth: number;
+};
+
 export type TranscriptParseResult = {
-	transcripts: Record<string, string>;
+	transcripts: Record<string, TranscriptSentence[]>;
 	unknownLessonIds: string[];
 };
 
 const headingPattern = /^\[Unit\s+(\d+)\.(\d+)\]\s*$/;
+const sentencePattern = /^(\s*)-\s+(.+?)\s*$/;
 
 export function lessonId(unit: number, section: number): string {
 	return `Unit ${unit}.${section}`;
@@ -14,17 +21,23 @@ export function parseTranscript(
 	knownLessonIds: ReadonlySet<string>
 ): TranscriptParseResult {
 	const normalizedText = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
-	const transcripts: Record<string, string> = {};
+	const transcripts: Record<string, TranscriptSentence[]> = {};
 	const unknownLessonIds: string[] = [];
 	let currentLessonId: string | null = null;
 	let currentLines: string[] = [];
 
 	const saveCurrent = () => {
 		if (!currentLessonId) return;
-		const body = currentLines.join('\n').trim();
-		if (!body) throw new Error(`${currentLessonId} の本文が空です。`);
+		const bodyLines = currentLines.filter((line) => line.trim());
+		if (!bodyLines.length) throw new Error(`${currentLessonId} の本文が空です。`);
+		const sentences = bodyLines.map((line, index) => {
+			const sentence = line.match(sentencePattern);
+			if (!sentence) throw new Error(`${currentLessonId} の本文は「- 」で始まる行にしてください。`);
+			const indentWidth = sentence[1].replace(/\t/g, '  ').length;
+			return { index, text: sentence[2], depth: Math.floor(indentWidth / 2) };
+		});
 		if (knownLessonIds.has(currentLessonId)) {
-			transcripts[currentLessonId] = body;
+			transcripts[currentLessonId] = sentences;
 		} else {
 			unknownLessonIds.push(currentLessonId);
 		}

@@ -5,7 +5,8 @@ export type AudioKind = 'single' | 'slow' | 'natural';
 export type AudioPin = {
 	/** Position in seconds, specified to one decimal place (for example, 12.3). */
 	atSeconds: number;
-	label: string;
+	/** Zero-based position of the matching sentence within a lesson transcript. */
+	sentenceIndex: number;
 };
 
 export type AudioTrackMetadata = {

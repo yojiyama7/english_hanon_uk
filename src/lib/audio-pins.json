@@ -2,107 +2,107 @@
 	"001_RP_Unit 0.1.mp3": [
 		{
 			"atSeconds": 4.8,
-			"label": "A"
+			"sentenceIndex": 0
 		},
 		{
 			"atSeconds": 21.3,
-			"label": "B"
+			"sentenceIndex": 1
 		}
 	],
 	"002_RP_Unit 0.2.mp3": [
 		{
 			"atSeconds": 4.5,
-			"label": "1"
+			"sentenceIndex": 0
 		},
 		{
 			"atSeconds": 20.6,
-			"label": "2"
+			"sentenceIndex": 1
 		},
 		{
 			"atSeconds": 36.8,
-			"label": "3"
+			"sentenceIndex": 2
 		},
 		{
 			"atSeconds": 51.7,
-			"label": "4"
+			"sentenceIndex": 3
 		},
 		{
 			"atSeconds": 70.9,
-			"label": "5"
+			"sentenceIndex": 4
 		}
 	],
 	"003_RP_Unit 0.3.mp3": [
 		{
 			"atSeconds": 3.8,
-			"label": "A"
+			"sentenceIndex": 0
 		},
 		{
 			"atSeconds": 16.3,
-			"label": "B"
+			"sentenceIndex": 1
 		}
 	],
 	"004_RP_Unit 0.4.mp3": [
 		{
 			"atSeconds": 4.3,
-			"label": "A"
+			"sentenceIndex": 0
 		},
 		{
 			"atSeconds": 21.4,
-			"label": "B"
+			"sentenceIndex": 1
 		}
 	],
 	"005_RP_Unit 0.5.mp3": [
 		{
 			"atSeconds": 4.5,
-			"label": "1"
+			"sentenceIndex": 0
 		},
 		{
 			"atSeconds": 14.2,
-			"label": "2"
+			"sentenceIndex": 1
 		},
 		{
 			"atSeconds": 27.9,
-			"label": "3"
+			"sentenceIndex": 2
 		},
 		{
 			"atSeconds": 41,
-			"label": "4"
+			"sentenceIndex": 3
 		},
 		{
 			"atSeconds": 58.4,
-			"label": "5"
+			"sentenceIndex": 4
 		}
 	],
 	"006_RP_Unit 0.6.mp3": [
 		{
 			"atSeconds": 4.5,
-			"label": "A"
+			"sentenceIndex": 0
 		},
 		{
 			"atSeconds": 32,
-			"label": "B"
+			"sentenceIndex": 1
 		}
 	],
 	"007_RP_Unit 0.7.mp3": [
 		{
 			"atSeconds": 4.4,
-			"label": "1"
+			"sentenceIndex": 0
 		},
 		{
 			"atSeconds": 21.6,
-			"label": "2"
+			"sentenceIndex": 1
 		},
 		{
 			"atSeconds": 49.1,
-			"label": "3"
+			"sentenceIndex": 2
 		},
 		{
 			"atSeconds": 62.2,
-			"label": "4"
+			"sentenceIndex": 3
 		},
 		{
 			"atSeconds": 82.5,
-			"label": "5"
+			"sentenceIndex": 4
 		}
 	]
 }

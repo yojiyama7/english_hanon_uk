@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { audioCatalog, type AudioKind, type AudioPin } from '$lib/audio-catalog';
+	import { upsertPin } from '$lib/audio-pin';
 	import {
 		deleteLibrary,
 		getLibraryManifest,
@@ -15,7 +16,7 @@
 		type AudioEnvelope,
 		type PinAdjustmentResult
 	} from '$lib/audio-onset';
-	import { lessonId, parseTranscript } from '$lib/transcript';
+	import { lessonId, parseTranscript, type TranscriptSentence } from '$lib/transcript';
 	import {
 		availableStorageBytes,
 		formatBytes,
@@ -38,7 +39,7 @@
 		unit: number;
 		section: number;
 		tracks: Partial<Record<AudioKind, PlayableTrack>>;
-		transcript?: string;
+		transcript?: TranscriptSentence[];
 	};
 
 	type UnitGroup = {
@@ -78,11 +79,10 @@
 	let importPreview = $state<ImportPreview | null>(null);
 	let objectUrls: string[] = [];
 	let developmentPins = $state<Record<string, AudioPin[]>>({});
-	let pinDrafts = $state<Record<string, string>>({});
-	let pinSaveStates = $state<Record<string, 'idle' | 'saving' | 'error'>>({});
+	let selectedTrackKinds = $state<Record<string, 'slow' | 'natural'>>({});
+	let pinSaveStates = $state<Record<string, boolean>>({});
 	let pinErrors = $state<Record<string, string>>({});
-	let pinTimeSaveVersions: Record<string, number> = {};
-	let pinLabelSaveVersions: Record<string, number> = {};
+	let pinSaveVersions: Record<string, number> = {};
 	let pinDeleteStates = $state<Record<string, boolean>>({});
 	let playbackTimes = $state<Record<string, { current: number; duration: number }>>({});
 	let lastUsedAudio: HTMLAudioElement | null = null;
@@ -107,7 +107,10 @@
 		audioEnvelopeCache.clear();
 	}
 
-	function buildUnits(files: File[], transcripts: Record<string, string> = {}): UnitGroup[] {
+	function buildUnits(
+		files: File[],
+		transcripts: Record<string, TranscriptSentence[]> = {}
+	): UnitGroup[] {
 		const filesByName = new Map<string, File>();
 		for (const file of files) {
 			if (filesByName.has(file.name)) {
@@ -234,146 +237,101 @@
 		);
 	}
 
-	function pinStateKey(track: PlayableTrack, pin: AudioPin): string {
-		return `${track.filename}\u0000${pin.atSeconds}`;
+	function pinStateKey(track: PlayableTrack, sentenceIndex: number): string {
+		return `${track.filename}\u0000${sentenceIndex}`;
 	}
 
-	async function jumpToPin(event: MouseEvent, pin: AudioPin) {
-		const player = (event.currentTarget as HTMLElement).closest('.player');
-		const audio = player?.querySelector('audio');
+	function audioForTrack(track: PlayableTrack): HTMLAudioElement | null {
+		for (const audio of document.querySelectorAll<HTMLAudioElement>('audio[data-filename]')) {
+			if (audio.dataset.filename === track.filename) return audio;
+		}
+		return null;
+	}
+
+	function selectedTrack(lesson: Lesson): PlayableTrack | undefined {
+		if (lesson.tracks.single) return lesson.tracks.single;
+		return lesson.tracks[selectedTrackKinds[lessonId(lesson.unit, lesson.section)] ?? 'slow'];
+	}
+
+	function pinFor(track: PlayableTrack, sentenceIndex: number): AudioPin | undefined {
+		return track.pins.find((pin) => pin.sentenceIndex === sentenceIndex);
+	}
+
+	function hasVisiblePins(track: PlayableTrack, sentences: TranscriptSentence[]): boolean {
+		return sentences.some((sentence) => pinFor(track, sentence.index));
+	}
+
+	async function jumpToPin(track: PlayableTrack, pin: AudioPin) {
+		const audio = audioForTrack(track);
 		if (!audio) return;
 		pauseOtherAudios(audio);
 		audio.currentTime = pin.atSeconds;
 		await audio.play().catch(() => undefined);
 	}
 
-	async function addPin(event: SubmitEvent, track: PlayableTrack) {
-		event.preventDefault();
-		const audio = (event.currentTarget as HTMLElement).closest('.player')?.querySelector('audio');
-		const label = pinDrafts[track.filename]?.trim();
-		if (!audio || !label) return;
-
-		const atSeconds = Math.round(audio.currentTime * 10) / 10;
-		pinSaveStates[track.filename] = 'saving';
-		pinErrors[track.filename] = '';
+	async function savePinTime(track: PlayableTrack, sentenceIndex: number, atSeconds: number) {
+		const saveKey = pinStateKey(track, sentenceIndex);
+		const previousPins = track.pins;
+		const saveVersion = (pinSaveVersions[saveKey] ?? 0) + 1;
+		pinSaveVersions[saveKey] = saveVersion;
+		pinSaveStates[saveKey] = true;
+		track.pins = upsertPin(track.pins, { sentenceIndex, atSeconds });
 		try {
 			const response = await fetch('/api/pins', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ filename: track.filename, atSeconds, label })
+				body: JSON.stringify({ filename: track.filename, sentenceIndex, atSeconds })
 			});
 			if (!response.ok) throw new Error(await response.text());
 			const result = (await response.json()) as { pins: AudioPin[] };
+			if (pinSaveVersions[saveKey] !== saveVersion) return;
 			track.pins = result.pins;
 			developmentPins[track.filename] = result.pins;
-			pinDrafts[track.filename] = '';
-			pinSaveStates[track.filename] = 'idle';
 		} catch {
-			pinSaveStates[track.filename] = 'error';
+			if (pinSaveVersions[saveKey] !== saveVersion) return;
+			track.pins = previousPins;
+			throw new Error('Pin time could not be saved.');
+		} finally {
+			if (pinSaveVersions[saveKey] === saveVersion) pinSaveStates[saveKey] = false;
+		}
+	}
+
+	async function saveCurrentPosition(track: PlayableTrack, sentenceIndex: number) {
+		const audio = audioForTrack(track);
+		if (!audio) return;
+		pinErrors[track.filename] = '';
+		try {
+			await savePinTime(track, sentenceIndex, Math.round(audio.currentTime * 10) / 10);
+		} catch {
 			pinErrors[track.filename] = 'ピンを保存できませんでした。';
 		}
 	}
 
-	async function savePinTime(track: PlayableTrack, pin: AudioPin, atSeconds: number) {
-		const previousAtSeconds = pin.atSeconds;
-		const saveVersion = (pinTimeSaveVersions[track.filename] ?? 0) + 1;
-		pinTimeSaveVersions[track.filename] = saveVersion;
-		pin.atSeconds = atSeconds;
-		track.pins.sort((a, b) => a.atSeconds - b.atSeconds);
-		try {
-			const response = await fetch('/api/pins', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
-					filename: track.filename,
-					previousAtSeconds,
-					atSeconds,
-					label: pin.label
-				})
-			});
-			if (!response.ok) throw new Error(await response.text());
-			const result = (await response.json()) as { pins: AudioPin[] };
-			if (pinTimeSaveVersions[track.filename] !== saveVersion) return;
-			const matchesCurrentPins =
-				result.pins.length === track.pins.length &&
-				result.pins.every(
-					(savedPin, index) =>
-						savedPin.atSeconds === track.pins[index].atSeconds && savedPin.label === track.pins[index].label
-				);
-			if (!matchesCurrentPins) track.pins = result.pins;
-			developmentPins[track.filename] = result.pins;
-		} catch {
-			if (pinTimeSaveVersions[track.filename] !== saveVersion) return;
-			pin.atSeconds = previousAtSeconds;
-			track.pins.sort((a, b) => a.atSeconds - b.atSeconds);
-			throw new Error('Pin time could not be saved.');
-		}
-	}
-
-	async function updatePinTime(event: Event, track: PlayableTrack, pin: AudioPin) {
+	async function updatePinTime(event: Event, track: PlayableTrack, sentenceIndex: number) {
 		const input = event.currentTarget;
-		if (!(input instanceof HTMLInputElement) || !input.validity.valid) return;
+		if (!(input instanceof HTMLInputElement) || !input.value || !input.validity.valid) return;
 
 		const atSeconds = Math.round(input.valueAsNumber * 10) / 10;
-		if (atSeconds === pin.atSeconds) return;
+		if (atSeconds === pinFor(track, sentenceIndex)?.atSeconds) return;
 		pinErrors[track.filename] = '';
 		try {
-			await savePinTime(track, pin, atSeconds);
+			await savePinTime(track, sentenceIndex, atSeconds);
 		} catch {
 			pinErrors[track.filename] = 'ピンの秒数を変更できませんでした。';
 		}
 	}
 
-	async function updatePinLabel(event: Event, track: PlayableTrack, pin: AudioPin) {
-		const input = event.currentTarget;
-		if (!(input instanceof HTMLInputElement)) return;
+	async function deletePin(track: PlayableTrack, sentence: TranscriptSentence) {
+		if (!window.confirm(`「${sentence.text}」のピンを削除しますか？`)) return;
 
-		const label = input.value.trim();
-		if (!label) {
-			input.value = pin.label;
-			return;
-		}
-		if (label === pin.label) {
-			input.value = label;
-			return;
-		}
-
-		const previousLabel = pin.label;
-		const saveKey = pinStateKey(track, pin);
-		const saveVersion = (pinLabelSaveVersions[saveKey] ?? 0) + 1;
-		pinLabelSaveVersions[saveKey] = saveVersion;
-		pin.label = label;
-		pinErrors[track.filename] = '';
-		try {
-			const response = await fetch('/api/pins', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ filename: track.filename, atSeconds: pin.atSeconds, label })
-			});
-			if (!response.ok) throw new Error(await response.text());
-			const result = (await response.json()) as { pins: AudioPin[] };
-			if (pinLabelSaveVersions[saveKey] !== saveVersion) return;
-			track.pins = result.pins;
-			developmentPins[track.filename] = result.pins;
-		} catch {
-			if (pinLabelSaveVersions[saveKey] !== saveVersion) return;
-			pin.label = previousLabel;
-			input.value = previousLabel;
-			pinErrors[track.filename] = 'ピンのラベルを変更できませんでした。';
-		}
-	}
-
-	async function deletePin(track: PlayableTrack, pin: AudioPin) {
-		if (!window.confirm(`「${pin.label}」のピンを削除しますか？`)) return;
-
-		const deleteKey = pinStateKey(track, pin);
+		const deleteKey = pinStateKey(track, sentence.index);
 		pinDeleteStates[deleteKey] = true;
 		pinErrors[track.filename] = '';
 		try {
 			const response = await fetch('/api/pins', {
 				method: 'DELETE',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ filename: track.filename, atSeconds: pin.atSeconds })
+				body: JSON.stringify({ filename: track.filename, sentenceIndex: sentence.index })
 			});
 			if (!response.ok) throw new Error(await response.text());
 			const result = (await response.json()) as { pins: AudioPin[] };
@@ -414,15 +372,12 @@
 	}
 
 	function adjustmentFailureMessage(pin: AudioPin, result: PinAdjustmentResult): string {
+		const description = `文${pin.sentenceIndex + 1}`;
 		return result.ok
 			? ''
 			: result.reason === 'pin-in-sound'
-				? `${pin.label}: ピン位置ですでに音が出ています。`
-				: `${pin.label}: 次の音を検出できませんでした。`;
-	}
-
-	function adjustmentCollision(track: PlayableTrack, pin: AudioPin, atSeconds: number): boolean {
-		return track.pins.some((otherPin) => otherPin !== pin && otherPin.atSeconds === atSeconds);
+				? `${description}: ピン位置ですでに音が出ています。`
+				: `${description}: 次の音を検出できませんでした。`;
 	}
 
 	async function adjustSinglePin(track: PlayableTrack, pin: AudioPin) {
@@ -438,51 +393,44 @@
 				};
 				return;
 			}
-			if (adjustmentCollision(track, pin, result.atSeconds)) {
-				adjustmentStates[track.filename] = {
-					busy: false,
-					message: `${pin.label}: 調整先に別のピンがあります。`,
-					hasError: true
-				};
-				return;
+			if (result.atSeconds !== pin.atSeconds) {
+				await savePinTime(track, pin.sentenceIndex, result.atSeconds);
 			}
-			if (result.atSeconds !== pin.atSeconds) await savePinTime(track, pin, result.atSeconds);
 			adjustmentStates[track.filename] = {
 				busy: false,
-				message: `${pin.label}: ${formatPinTime(result.atSeconds)}に調整しました。`,
+				message: `文${pin.sentenceIndex + 1}: ${formatPinTime(result.atSeconds)}に調整しました。`,
 				hasError: false
 			};
 		} catch {
 			adjustmentStates[track.filename] = {
 				busy: false,
-				message: `${pin.label}: 音声の解析または保存に失敗しました。`,
+				message: `文${pin.sentenceIndex + 1}: 音声の解析または保存に失敗しました。`,
 				hasError: true
 			};
 		}
 	}
 
-	async function adjustAllPins(track: PlayableTrack) {
+	async function adjustAllPins(track: PlayableTrack, sentences: TranscriptSentence[]) {
 		if (adjustmentStates[track.filename]?.busy) return;
 		adjustmentStates[track.filename] = { busy: true, message: '音声を解析中…', hasError: false };
 		let adjustedCount = 0;
 		const failures: string[] = [];
 		try {
 			const envelope = await getAudioEnvelope(track);
-			for (const pin of [...track.pins]) {
+			const visibleSentenceIndexes = new Set(sentences.map((sentence) => sentence.index));
+			for (const pin of track.pins.filter((pin) => visibleSentenceIndexes.has(pin.sentenceIndex))) {
 				const result = adjustPinToNextOnset(envelope, pin.atSeconds);
 				if (!result.ok) {
 					failures.push(adjustmentFailureMessage(pin, result));
 					continue;
 				}
-				if (adjustmentCollision(track, pin, result.atSeconds)) {
-					failures.push(`${pin.label}: 調整先に別のピンがあります。`);
-					continue;
-				}
 				try {
-					if (result.atSeconds !== pin.atSeconds) await savePinTime(track, pin, result.atSeconds);
+					if (result.atSeconds !== pin.atSeconds) {
+						await savePinTime(track, pin.sentenceIndex, result.atSeconds);
+					}
 					adjustedCount += 1;
 				} catch {
-					failures.push(`${pin.label}: 保存に失敗しました。`);
+					failures.push(`文${pin.sentenceIndex + 1}: 保存に失敗しました。`);
 				}
 			}
 			adjustmentStates[track.filename] = {
@@ -695,6 +643,7 @@
 			controls
 			preload="metadata"
 			src={track.url}
+			data-filename={track.filename}
 			aria-label={ariaLabel}
 			onloadedmetadata={(event) => updatePlaybackTime(event, track.filename)}
 			ondurationchange={(event) => updatePlaybackTime(event, track.filename)}
@@ -710,99 +659,6 @@
 				playbackTimes[track.filename]?.duration
 			)}
 		</output>
-		{#if track.pins.length > 0}
-			<div class="pins" aria-label={`${ariaLabel} markers`}>
-				{#each track.pins as pin}
-					<div class="pin-entry">
-						<button class="pin-jump" type="button" onclick={(event) => jumpToPin(event, pin)}>
-							<span class="pin-time">{formatPinTime(pin.atSeconds)}</span>
-							{pin.label}
-						</button>
-						{#if isDevelopment}
-							<div class="pin-time-editor">
-								<label>
-									<span class="visually-hidden">{pin.label}のラベル名</span>
-									<input
-										class="pin-label-input"
-										type="text"
-										maxlength="100"
-										value={pin.label}
-										disabled={pinDeleteStates[pinStateKey(track, pin)]}
-										onchange={(event) => updatePinLabel(event, track, pin)}
-									/>
-								</label>
-								<label>
-									<span class="visually-hidden">{pin.label}の秒数</span>
-									<input
-										type="number"
-										min="0"
-										step="0.1"
-										value={pin.atSeconds}
-										disabled={pinDeleteStates[pinStateKey(track, pin)]}
-										onchange={(event) => updatePinTime(event, track, pin)}
-									/>
-									<span class="seconds-unit">秒</span>
-								</label>
-								<button
-									class="auto-adjust-pin"
-									type="button"
-									disabled={adjustmentStates[track.filename]?.busy ||
-										pinDeleteStates[pinStateKey(track, pin)]}
-									onclick={() => adjustSinglePin(track, pin)}
-								>音に合わせる</button>
-								<button
-									class="delete-pin"
-									type="button"
-									disabled={pinDeleteStates[pinStateKey(track, pin)]}
-									onclick={() => deletePin(track, pin)}
-								>
-									{pinDeleteStates[pinStateKey(track, pin)] ? '削除中…' : '削除'}
-								</button>
-							</div>
-						{/if}
-					</div>
-				{/each}
-			</div>
-		{/if}
-		{#if isDevelopment}
-			{#if track.pins.length > 0}
-				<div class="track-adjustment">
-					<button
-						type="button"
-						disabled={adjustmentStates[track.filename]?.busy}
-						onclick={() => adjustAllPins(track)}
-					>
-						{adjustmentStates[track.filename]?.busy ? '解析中…' : 'すべてのピンを音に合わせる'}
-					</button>
-					{#if adjustmentStates[track.filename]?.message}
-						<p
-							class:adjustment-error={adjustmentStates[track.filename]?.hasError}
-							aria-live="polite"
-						>
-							{adjustmentStates[track.filename].message}
-						</p>
-					{/if}
-				</div>
-			{/if}
-			<form class="pin-editor" onsubmit={(event) => addPin(event, track)}>
-				<input
-					type="text"
-					maxlength="100"
-					placeholder="ピンのラベル"
-					aria-label={`${ariaLabel} pin label`}
-					bind:value={pinDrafts[track.filename]}
-				/>
-				<button
-					type="submit"
-					disabled={!pinDrafts[track.filename]?.trim() || pinSaveStates[track.filename] === 'saving'}
-				>
-					{pinSaveStates[track.filename] === 'saving' ? '保存中…' : '現在位置にピン'}
-				</button>
-				{#if pinErrors[track.filename]}
-					<p class="pin-error" aria-live="polite">{pinErrors[track.filename]}</p>
-				{/if}
-			</form>
-		{/if}
 	</div>
 {/snippet}
 
@@ -841,6 +697,7 @@
 
 					<div class="lessons">
 						{#each group.lessons as lesson}
+							{@const activeTrack = selectedTrack(lesson)}
 							<div class:single-track={group.unit === 0} class="lesson-row">
 								<h2>{lesson.title}</h2>
 
@@ -859,7 +716,96 @@
 								{#if lesson.transcript}
 									<details class="transcript">
 										<summary>文字起こしを表示</summary>
-										<div class="transcript-body">{lesson.transcript}</div>
+										{#if lesson.tracks.slow && lesson.tracks.natural}
+											<div class="track-toggle" role="group" aria-label={`${lesson.title} 再生音源`}>
+												<button
+													type="button"
+													class:active={(selectedTrackKinds[lessonId(lesson.unit, lesson.section)] ?? 'slow') === 'slow'}
+													aria-pressed={(selectedTrackKinds[lessonId(lesson.unit, lesson.section)] ?? 'slow') === 'slow'}
+													onclick={() => (selectedTrackKinds[lessonId(lesson.unit, lesson.section)] = 'slow')}
+												>Slow</button>
+												<button
+													type="button"
+													class:active={selectedTrackKinds[lessonId(lesson.unit, lesson.section)] === 'natural'}
+													aria-pressed={selectedTrackKinds[lessonId(lesson.unit, lesson.section)] === 'natural'}
+													onclick={() => (selectedTrackKinds[lessonId(lesson.unit, lesson.section)] = 'natural')}
+												>Natural</button>
+											</div>
+										{/if}
+										{#if isDevelopment && activeTrack && hasVisiblePins(activeTrack, lesson.transcript)}
+											<div class="track-adjustment">
+												<button
+													type="button"
+													disabled={adjustmentStates[activeTrack.filename]?.busy}
+													onclick={() => adjustAllPins(activeTrack, lesson.transcript ?? [])}
+												>
+													{adjustmentStates[activeTrack.filename]?.busy ? '解析中…' : '選択中音源の全ピンを音に合わせる'}
+												</button>
+												{#if adjustmentStates[activeTrack.filename]?.message}
+													<p class:adjustment-error={adjustmentStates[activeTrack.filename]?.hasError} aria-live="polite">
+														{adjustmentStates[activeTrack.filename].message}
+													</p>
+												{/if}
+											</div>
+										{/if}
+										<div class="transcript-body">
+											{#each lesson.transcript as sentence}
+												{@const pin = activeTrack ? pinFor(activeTrack, sentence.index) : undefined}
+												<div class="transcript-sentence" style={`padding-left: ${sentence.depth * 22}px`}>
+													<div class="sentence-line">
+														<span class="sentence-bullet" aria-hidden="true">–</span>
+														{#if activeTrack && pin}
+															<button class="sentence-jump" type="button" onclick={() => jumpToPin(activeTrack, pin)}>
+																<span class="sentence-time">{formatPinTime(pin.atSeconds)}</span>
+																<span>{sentence.text}</span>
+															</button>
+														{:else}
+															<span class="sentence-text">{sentence.text}</span>
+														{/if}
+													</div>
+													{#if isDevelopment && activeTrack}
+														<div class="sentence-editor">
+															<button
+																type="button"
+																disabled={pinSaveStates[pinStateKey(activeTrack, sentence.index)]}
+																onclick={() => saveCurrentPosition(activeTrack, sentence.index)}
+															>
+																{pinSaveStates[pinStateKey(activeTrack, sentence.index)] ? '保存中…' : pin ? '現在位置で更新' : '現在位置を保存'}
+															</button>
+															<label>
+																<span class="visually-hidden">{sentence.text}の秒数</span>
+																<input
+																	type="number"
+																	min="0"
+																	step="0.1"
+																	placeholder="秒"
+																	value={pin?.atSeconds ?? ''}
+																	disabled={pinSaveStates[pinStateKey(activeTrack, sentence.index)]}
+																	onchange={(event) => updatePinTime(event, activeTrack, sentence.index)}
+																/>
+																<span class="seconds-unit">秒</span>
+															</label>
+															{#if pin}
+																<button
+																	type="button"
+																	disabled={adjustmentStates[activeTrack.filename]?.busy || pinDeleteStates[pinStateKey(activeTrack, sentence.index)]}
+																	onclick={() => adjustSinglePin(activeTrack, pin)}
+																>音に合わせる</button>
+																<button
+																	class="delete-pin"
+																	type="button"
+																	disabled={pinDeleteStates[pinStateKey(activeTrack, sentence.index)]}
+																	onclick={() => deletePin(activeTrack, sentence)}
+																>{pinDeleteStates[pinStateKey(activeTrack, sentence.index)] ? '削除中…' : '削除'}</button>
+															{/if}
+														</div>
+													{/if}
+												</div>
+											{/each}
+										</div>
+										{#if isDevelopment && activeTrack && pinErrors[activeTrack.filename]}
+											<p class="pin-error" aria-live="polite">{pinErrors[activeTrack.filename]}</p>
+										{/if}
 									</details>
 								{/if}
 							</div>
@@ -1128,12 +1074,149 @@
 	}
 
 	.transcript-body {
-		max-width: 760px;
+		max-width: 920px;
 		padding: 14px 0 4px;
 		color: #222;
 		font-size: 0.92rem;
-		line-height: 1.8;
-		white-space: pre-wrap;
+		line-height: 1.6;
+	}
+
+	.track-toggle {
+		display: inline-flex;
+		margin-top: 12px;
+		border: 1px solid #aaa;
+		border-radius: 999px;
+		overflow: hidden;
+	}
+
+	.track-toggle button {
+		min-width: 76px;
+		padding: 6px 14px;
+		border: 0;
+		background: #fff;
+		color: #555;
+		font: inherit;
+		font-size: 0.72rem;
+		font-weight: 650;
+		cursor: pointer;
+	}
+
+	.track-toggle button + button {
+		border-left: 1px solid #aaa;
+	}
+
+	.track-toggle button.active {
+		background: #111;
+		color: #fff;
+	}
+
+	.transcript-sentence {
+		padding-top: 8px;
+		padding-bottom: 8px;
+		border-top: 1px solid #ededed;
+	}
+
+	.sentence-line {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+	}
+
+	.sentence-bullet {
+		flex: 0 0 auto;
+		color: #888;
+	}
+
+	.sentence-text {
+		min-width: 0;
+	}
+
+	.sentence-jump {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 9px;
+		min-width: 0;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		color: #174ea6;
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.sentence-jump:hover > span:last-child {
+		text-decoration: underline;
+	}
+
+	.sentence-jump:focus-visible {
+		border-radius: 2px;
+		outline: 2px solid #2864dc;
+		outline-offset: 3px;
+	}
+
+	.sentence-time {
+		flex: 0 0 auto;
+		color: #666;
+		font-size: 0.72rem;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.sentence-editor {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 5px;
+		margin: 6px 0 0 18px;
+	}
+
+	.sentence-editor label {
+		display: flex;
+		align-items: center;
+		gap: 3px;
+	}
+
+	.sentence-editor input {
+		width: 72px;
+		height: 30px;
+		padding: 0 5px;
+		border: 1px solid #bbb;
+		font: inherit;
+		font-size: 0.74rem;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.sentence-editor button,
+	.track-adjustment button {
+		min-height: 30px;
+		padding: 0 8px;
+		border: 1px solid #999;
+		background: #fff;
+		color: #222;
+		font: inherit;
+		font-size: 0.7rem;
+		cursor: pointer;
+	}
+
+	.sentence-editor button:hover,
+	.track-adjustment button:hover {
+		border-color: #111;
+	}
+
+	.sentence-editor button:disabled,
+	.track-adjustment button:disabled {
+		color: #777;
+		cursor: default;
+	}
+
+	.sentence-editor .delete-pin {
+		border-color: #c8a3a3;
+		color: #9d2222;
+	}
+
+	.seconds-unit {
+		color: #666;
+		font-size: 0.7rem;
 	}
 
 	h2 {
@@ -1168,111 +1251,6 @@
 		letter-spacing: 0.02em;
 	}
 
-	.pins {
-		display: flex;
-		grid-column: 2;
-		flex-wrap: wrap;
-		gap: 6px;
-	}
-
-	.pin-entry {
-		display: flex;
-		align-items: flex-start;
-		flex-direction: column;
-		gap: 5px;
-	}
-
-	.pins .pin-jump {
-		padding: 6px 9px;
-		border: 1px solid #c8c8c8;
-		border-radius: 999px;
-		background: #fff;
-		color: #222;
-		font: inherit;
-		font-size: 0.72rem;
-		cursor: pointer;
-	}
-
-	.pins .pin-jump:hover {
-		border-color: #111;
-		background: #f5f5f5;
-	}
-
-	.pins .pin-time {
-		margin-right: 5px;
-		color: #666;
-		font-size: inherit;
-		font-variant-numeric: tabular-nums;
-		letter-spacing: 0;
-		text-transform: none;
-	}
-
-	.pin-time-editor {
-		display: flex;
-		align-items: center;
-		gap: 5px;
-	}
-
-	.pin-time-editor label {
-		display: flex;
-		align-items: center;
-		gap: 3px;
-	}
-
-	.pin-time-editor input {
-		width: 68px;
-		height: 30px;
-		padding: 0 5px;
-		border: 1px solid #bbb;
-		font: inherit;
-		font-size: 0.74rem;
-		font-variant-numeric: tabular-nums;
-	}
-
-	.pin-time-editor .pin-label-input {
-		width: 112px;
-		font-variant-numeric: normal;
-	}
-
-	.pin-time-editor .seconds-unit {
-		color: #666;
-		font-size: 0.7rem;
-		font-weight: 500;
-		letter-spacing: 0;
-		text-transform: none;
-	}
-
-	.pin-time-editor .auto-adjust-pin,
-	.pin-time-editor .delete-pin,
-	.track-adjustment button {
-		min-height: 30px;
-		padding: 0 8px;
-		border: 1px solid #999;
-		background: #fff;
-		color: #222;
-		font: inherit;
-		font-size: 0.7rem;
-		cursor: pointer;
-	}
-
-	.pin-time-editor .auto-adjust-pin:hover,
-	.pin-time-editor .delete-pin:hover,
-	.track-adjustment button:hover {
-		border-color: #111;
-	}
-
-	.pin-time-editor .auto-adjust-pin:disabled,
-	.pin-time-editor .delete-pin:disabled,
-	.track-adjustment button:disabled {
-		color: #777;
-		cursor: default;
-	}
-
-	.pin-time-editor .delete-pin {
-		border-color: #c8a3a3;
-		color: #9d2222;
-	}
-
 	.track-adjustment {
 		display: flex;
 		grid-column: 2;
@@ -1301,42 +1279,6 @@
 		clip: rect(0, 0, 0, 0);
 		white-space: nowrap;
 		border: 0;
-	}
-
-	.pin-editor {
-		display: grid;
-		grid-column: 2;
-		grid-template-columns: minmax(0, 1fr) auto;
-		gap: 6px;
-	}
-
-	.pin-editor input,
-	.pin-editor button {
-		min-height: 34px;
-		border: 1px solid #bbb;
-		background: #fff;
-		font: inherit;
-		font-size: 0.76rem;
-	}
-
-	.pin-editor input {
-		min-width: 0;
-		padding: 0 10px;
-	}
-
-	.pin-editor button {
-		padding: 0 11px;
-		border-color: #111;
-		background: #111;
-		color: #fff;
-		font-weight: 650;
-		cursor: pointer;
-	}
-
-	.pin-editor button:disabled {
-		border-color: #aaa;
-		background: #aaa;
-		cursor: default;
 	}
 
 	.pin-error {
@@ -1545,9 +1487,7 @@
 		}
 
 		.playback-time,
-		.pins,
-		.track-adjustment,
-		.pin-editor {
+		.track-adjustment {
 			grid-column: 1;
 		}
 	}
