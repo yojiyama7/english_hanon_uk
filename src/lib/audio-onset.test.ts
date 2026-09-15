@@ -17,6 +17,19 @@ function samplesWithSound(ranges: Array<[startSeconds: number, endSeconds: numbe
 	return samples;
 }
 
+function samplesWithLevels(
+	ranges: Array<[startSeconds: number, endSeconds: number, amplitude: number]>,
+	durationSeconds = 2
+) {
+	const samples = new Float32Array(durationSeconds * sampleRate).fill(0.00001);
+	for (const [startSeconds, endSeconds, amplitude] of ranges) {
+		for (let index = startSeconds * sampleRate; index < endSeconds * sampleRate; index += 1) {
+			samples[index] = amplitude;
+		}
+	}
+	return samples;
+}
+
 test('adjusts a silent pin to 0.4 seconds before the next onset', () => {
 	const envelope = createAudioEnvelope([samplesWithSound([[0.8, 1.2]])], sampleRate);
 	assert.deepEqual(adjustPinToNextOnset(envelope, 0.2), { ok: true, atSeconds: 0.4, onsetSeconds: 0.8 });
@@ -60,6 +73,49 @@ test('rejects onsets when the preceding 0.4 seconds contains sound', () => {
 		sampleRate
 	);
 	assert.deepEqual(findStandardPinPositions(envelope), [1.3]);
+});
+
+test('uses a sustained weak onset shortly before confirmed sound', () => {
+	const envelope = createAudioEnvelope(
+		[samplesWithLevels([[0.83, 0.9, 0.0003], [0.98, 1.3, 0.1]])],
+		sampleRate
+	);
+	assert.deepEqual(adjustPinToNextOnset(envelope, 0.2), {
+		ok: true,
+		atSeconds: 0.4,
+		onsetSeconds: 0.8300000000000001
+	});
+	assert.deepEqual(findStandardPinPositions(envelope), [0.4]);
+});
+
+test('does not create a position for weak sound without nearby confirmed sound', () => {
+	const envelope = createAudioEnvelope(
+		[samplesWithLevels([[0.6, 0.7, 0.0003], [1.2, 1.5, 0.1]])],
+		sampleRate
+	);
+	assert.deepEqual(findStandardPinPositions(envelope), [0.8]);
+});
+
+test('rejects a weak onset without 0.4 seconds of preceding silence', () => {
+	const envelope = createAudioEnvelope(
+		[
+			samplesWithLevels([
+				[0.5, 0.55, 0.0003],
+				[0.75, 0.85, 0.0003],
+				[0.9, 1.2, 0.1]
+			])
+		],
+		sampleRate
+	);
+	assert.deepEqual(findStandardPinPositions(envelope), []);
+});
+
+test('rounds a standard position down to preserve at least 0.4 seconds of silence', () => {
+	const envelope = createAudioEnvelope(
+		[samplesWithLevels([[0.86, 1.2, 0.1]])],
+		sampleRate
+	);
+	assert.deepEqual(findStandardPinPositions(envelope), [0.4]);
 });
 
 test('selects strict previous and next standard positions', () => {

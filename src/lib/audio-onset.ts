@@ -2,9 +2,12 @@ const frameDurationSeconds = 0.01;
 const minimumThresholdDb = -45;
 const maximumThresholdDb = -25;
 const noiseMarginDb = 12;
+const minimumWeakThresholdDb = -75;
+const weakNoiseMarginDb = 6;
 const requiredSilentFrames = 3;
 const requiredSoundFrames = 5;
 const requiredLeadSilenceSeconds = 0.4;
+const weakOnsetLookbackSeconds = 0.25;
 
 export type AudioEnvelope = {
 	frames: Float32Array;
@@ -18,12 +21,35 @@ export type PinAdjustmentResult =
 
 export type PinPositionDirection = 'previous' | 'next';
 
+const weakThresholdCache = new WeakMap<AudioEnvelope, number>();
+
 function amplitudeToDb(amplitude: number): number {
 	return amplitude > 0 ? 20 * Math.log10(amplitude) : Number.NEGATIVE_INFINITY;
 }
 
 function dbToAmplitude(db: number): number {
 	return 10 ** (db / 20);
+}
+
+function noiseFloorForFrames(frames: Float32Array): number {
+	const sortedFrames = Array.from(frames).sort((a, b) => a - b);
+	return sortedFrames[Math.floor((sortedFrames.length - 1) * 0.2)] ?? 0;
+}
+
+function calculateWeakThreshold(noiseFloor: number, strongThreshold: number): number {
+	const weakThresholdDb = Math.min(
+		amplitudeToDb(strongThreshold),
+		Math.max(minimumWeakThresholdDb, amplitudeToDb(noiseFloor) + weakNoiseMarginDb)
+	);
+	return dbToAmplitude(weakThresholdDb);
+}
+
+function weakThresholdFor(envelope: AudioEnvelope): number {
+	const cachedThreshold = weakThresholdCache.get(envelope);
+	if (cachedThreshold !== undefined) return cachedThreshold;
+	const threshold = calculateWeakThreshold(noiseFloorForFrames(envelope.frames), envelope.threshold);
+	weakThresholdCache.set(envelope, threshold);
+	return threshold;
 }
 
 export function createAudioEnvelope(channels: Float32Array[], sampleRate: number): AudioEnvelope {
@@ -48,37 +74,30 @@ export function createAudioEnvelope(channels: Float32Array[], sampleRate: number
 		frames[frameIndex] = sampleCount > 0 ? Math.sqrt(squareSum / sampleCount) : 0;
 	}
 
-	const sortedFrames = Array.from(frames).sort((a, b) => a - b);
-	const noiseFloor = sortedFrames[Math.floor((sortedFrames.length - 1) * 0.2)] ?? 0;
+	const noiseFloor = noiseFloorForFrames(frames);
 	const thresholdDb = Math.min(
 		maximumThresholdDb,
 		Math.max(minimumThresholdDb, amplitudeToDb(noiseFloor) + noiseMarginDb)
 	);
 
-	return { frames, frameDurationSeconds, threshold: dbToAmplitude(thresholdDb) };
+	const envelope = { frames, frameDurationSeconds, threshold: dbToAmplitude(thresholdDb) };
+	weakThresholdCache.set(envelope, calculateWeakThreshold(noiseFloor, envelope.threshold));
+	return envelope;
 }
 
-function findOnsetFrames(envelope: AudioEnvelope, startFrame = 0): number[] {
+function findSustainedOnsetFrames(
+	envelope: AudioEnvelope,
+	threshold: number,
+	startFrame = 0
+): number[] {
 	const onsetFrames: number[] = [];
 	let consecutiveSoundFrames = 0;
-	const requiredLeadSilentFrames = Math.ceil(
-		requiredLeadSilenceSeconds / envelope.frameDurationSeconds
-	);
 
 	for (let index = startFrame; index < envelope.frames.length; index += 1) {
-		if (envelope.frames[index] >= envelope.threshold) {
+		if (envelope.frames[index] >= threshold) {
 			consecutiveSoundFrames += 1;
 			if (consecutiveSoundFrames === requiredSoundFrames) {
-				const onsetFrame = index - requiredSoundFrames + 1;
-				const silenceStart = onsetFrame - requiredLeadSilentFrames;
-				if (
-					silenceStart >= 0 &&
-					envelope.frames
-						.subarray(silenceStart, onsetFrame)
-						.every((frame) => frame < envelope.threshold)
-				) {
-					onsetFrames.push(onsetFrame);
-				}
+				onsetFrames.push(index - requiredSoundFrames + 1);
 			}
 		} else {
 			consecutiveSoundFrames = 0;
@@ -88,9 +107,46 @@ function findOnsetFrames(envelope: AudioEnvelope, startFrame = 0): number[] {
 	return onsetFrames;
 }
 
+function hasLeadSilence(envelope: AudioEnvelope, onsetFrame: number, threshold: number): boolean {
+	const requiredLeadSilentFrames = Math.ceil(
+		requiredLeadSilenceSeconds / envelope.frameDurationSeconds
+	);
+	const silenceStart = onsetFrame - requiredLeadSilentFrames;
+	return (
+		silenceStart >= 0 &&
+		envelope.frames
+			.subarray(silenceStart, onsetFrame)
+			.every((frame) => frame < threshold)
+	);
+}
+
+function findOnsetFrames(envelope: AudioEnvelope, startFrame = 0): number[] {
+	const weakThreshold = weakThresholdFor(envelope);
+	const weakOnsetLookbackFrames = Math.ceil(
+		weakOnsetLookbackSeconds / envelope.frameDurationSeconds
+	);
+	const weakOnsetFrames = findSustainedOnsetFrames(envelope, weakThreshold, startFrame);
+	const onsetFrames = findSustainedOnsetFrames(envelope, envelope.threshold, startFrame).flatMap(
+		(strongOnsetFrame) => {
+			const earliestWeakFrame = Math.max(startFrame, strongOnsetFrame - weakOnsetLookbackFrames);
+			const weakOnsetFrame = weakOnsetFrames.find(
+				(frame) =>
+					frame >= earliestWeakFrame &&
+					frame <= strongOnsetFrame &&
+					hasLeadSilence(envelope, frame, weakThreshold)
+			);
+			if (weakOnsetFrame !== undefined) return [weakOnsetFrame];
+			return hasLeadSilence(envelope, strongOnsetFrame, weakThreshold)
+				? [strongOnsetFrame]
+				: [];
+		}
+	);
+	return [...new Set(onsetFrames)];
+}
+
 function pinPositionForOnset(envelope: AudioEnvelope, onsetFrame: number): number {
 	const onsetSeconds = onsetFrame * envelope.frameDurationSeconds;
-	return Math.round((onsetSeconds - requiredLeadSilenceSeconds) * 10) / 10;
+	return Math.floor((onsetSeconds - requiredLeadSilenceSeconds) * 10 + 1e-8) / 10;
 }
 
 export function findStandardPinPositions(envelope: AudioEnvelope): number[] {
@@ -115,7 +171,9 @@ export function adjustPinToNextOnset(envelope: AudioEnvelope, pinSeconds: number
 	const startFrame = Math.max(0, Math.floor(pinSeconds / envelope.frameDurationSeconds));
 	const silenceEnd = Math.min(startFrame + requiredSilentFrames, envelope.frames.length);
 	for (let index = startFrame; index < silenceEnd; index += 1) {
-		if (envelope.frames[index] >= envelope.threshold) return { ok: false, reason: 'pin-in-sound' };
+		if (envelope.frames[index] >= weakThresholdFor(envelope)) {
+			return { ok: false, reason: 'pin-in-sound' };
+		}
 	}
 	if (silenceEnd - startFrame < requiredSilentFrames) return { ok: false, reason: 'no-onset' };
 
