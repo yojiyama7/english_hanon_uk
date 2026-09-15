@@ -540,43 +540,6 @@
 		}
 	}
 
-	async function adjustAllPins(track: PlayableTrack, sentences: TranscriptSentence[]) {
-		if (adjustmentStates[track.filename]?.busy) return;
-		adjustmentStates[track.filename] = { busy: true, message: '音声を解析中…', hasError: false };
-		let adjustedCount = 0;
-		const failures: string[] = [];
-		try {
-			const envelope = await getAudioEnvelope(track);
-			const visibleSentenceIndexes = new Set(sentences.map((sentence) => sentence.index));
-			for (const pin of track.pins.filter((pin) => visibleSentenceIndexes.has(pin.sentenceIndex))) {
-				const result = adjustPinToNextOnset(envelope, pin.atSeconds);
-				if (!result.ok) {
-					failures.push(adjustmentFailureMessage(pin, result));
-					continue;
-				}
-				try {
-					if (result.atSeconds !== pin.atSeconds) {
-						await savePinTime(track, pin.sentenceIndex, result.atSeconds);
-					}
-					adjustedCount += 1;
-				} catch {
-					failures.push(`文${pin.sentenceIndex + 1}: 保存に失敗しました。`);
-				}
-			}
-			adjustmentStates[track.filename] = {
-				busy: false,
-				message: `${adjustedCount}件を調整しました。${failures.length ? ` ${failures.join(' ')}` : ''}`,
-				hasError: failures.length > 0
-			};
-		} catch {
-			adjustmentStates[track.filename] = {
-				busy: false,
-				message: '音声を解析できませんでした。',
-				hasError: true
-			};
-		}
-	}
-
 	async function loadDevelopmentPins() {
 		if (!isDevelopment) return;
 		const response = await fetch('/api/pins');
@@ -867,20 +830,11 @@
 												>Natural</button>
 											</div>
 										{/if}
-										{#if isDevelopment && activeTrack && hasVisiblePins(activeTrack, lesson.transcript)}
+										{#if isDevelopment && activeTrack && adjustmentStates[activeTrack.filename]?.message}
 											<div class="track-adjustment">
-												<button
-													type="button"
-													disabled={adjustmentStates[activeTrack.filename]?.busy}
-													onclick={() => adjustAllPins(activeTrack, lesson.transcript ?? [])}
-												>
-													{adjustmentStates[activeTrack.filename]?.busy ? '解析中…' : '選択中音源の全ピンを音に合わせる'}
-												</button>
-												{#if adjustmentStates[activeTrack.filename]?.message}
-													<p class:adjustment-error={adjustmentStates[activeTrack.filename]?.hasError} aria-live="polite">
-														{adjustmentStates[activeTrack.filename].message}
-													</p>
-												{/if}
+												<p class:adjustment-error={adjustmentStates[activeTrack.filename]?.hasError} aria-live="polite">
+													{adjustmentStates[activeTrack.filename].message}
+												</p>
 											</div>
 										{/if}
 										<div class="transcript-body">
@@ -1360,8 +1314,7 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	.sentence-editor button,
-	.track-adjustment button {
+	.sentence-editor button {
 		min-height: 30px;
 		padding: 0 8px;
 		border: 1px solid #999;
@@ -1372,13 +1325,11 @@
 		cursor: pointer;
 	}
 
-	.sentence-editor button:hover,
-	.track-adjustment button:hover {
+	.sentence-editor button:hover {
 		border-color: #111;
 	}
 
-	.sentence-editor button:disabled,
-	.track-adjustment button:disabled {
+	.sentence-editor button:disabled {
 		color: #777;
 		cursor: default;
 	}
