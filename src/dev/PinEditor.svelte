@@ -12,7 +12,15 @@
 	import type { PlayableTrack } from '$lib/player-types';
 	import type { TranscriptSentence } from '$lib/transcript';
 
-	let { track, sentences }: { track: PlayableTrack; sentences: TranscriptSentence[] } = $props();
+	let {
+		track,
+		sentences,
+		onactivate
+	}: {
+		track: PlayableTrack;
+		sentences: TranscriptSentence[];
+		onactivate: (event: MouseEvent | KeyboardEvent, pin: AudioPin) => void;
+	} = $props();
 	let busy = $state(false);
 	let message = $state('');
 	let hasError = $state(false);
@@ -182,46 +190,89 @@
 			busy = false;
 		}
 	}
+
+	function activateSentence(event: MouseEvent | KeyboardEvent, pin: AudioPin) {
+		if (event.target instanceof Element && event.target.closest('.sentence-editor')) return;
+		onactivate(event, pin);
+	}
 </script>
 
-<section class="pin-editor" aria-label={`${track.filename} のピン編集`}>
-	<div class="editor-heading">
-		<strong>ピン編集</strong>
-		<span class:error={hasError} aria-live="polite">{message}</span>
+{#if message}
+	<div class="track-adjustment">
+		<p class:adjustment-error={hasError} aria-live="polite">{message}</p>
 	</div>
+	{/if}
+<div class="transcript-body">
 	{#each sentences as sentence}
 		{@const pin = pinFor(sentence.index)}
-		<div class="editor-row">
-			<span class="sentence-number">文{sentence.index + 1}</span>
-			<button type="button" disabled={busy} onclick={() => saveCurrentPosition(sentence.index)}>
-				{pin ? '現在位置で更新' : '現在位置を保存'}
-			</button>
-			<label>
-				<span class="visually-hidden">{sentence.text}の秒数</span>
-				<input type="number" min="0" step="0.1" placeholder="秒" value={pin?.atSeconds ?? ''} disabled={busy} onchange={(event) => updateTime(event, sentence.index)} />
-				<span>秒</span>
-			</label>
-			{#if pin}
-				<button type="button" disabled={busy} onclick={() => alignToSound(pin)}>音に合わせる</button>
-				<button type="button" disabled={busy || findAdjacentPinPosition(standardPositions, pin.atSeconds, 'previous') === undefined} onclick={() => moveToStandard(pin, 'previous')}>前の規定位置</button>
-				<button type="button" disabled={busy || findAdjacentPinPosition(standardPositions, pin.atSeconds, 'next') === undefined} onclick={() => moveToStandard(pin, 'next')}>次の規定位置</button>
-				<button class="delete" type="button" disabled={busy} onclick={() => deletePin(sentence)}>削除</button>
-			{/if}
+		<div
+			class:clickable={pin}
+			class="transcript-sentence"
+			style={`padding-left: ${sentence.depth * 22}px`}
+			role="button"
+			tabindex={pin ? 0 : -1}
+			aria-disabled={!pin}
+			onclick={(event) => pin && activateSentence(event, pin)}
+			onkeydown={(event) => pin && activateSentence(event, pin)}
+		>
+			<div class="sentence-line">
+				<span class="sentence-bullet" aria-hidden="true">–</span>
+				{#if pin}
+					<span class="sentence-jump">
+						<span class="sentence-time">{formatTime(pin.atSeconds)}</span>
+						<span>{sentence.text}</span>
+					</span>
+				{:else}
+					<span class="sentence-text">{sentence.text}</span>
+				{/if}
+			</div>
+			<div class="sentence-editor">
+				<button type="button" disabled={busy} onclick={() => saveCurrentPosition(sentence.index)}>
+					{busy ? '保存中…' : pin ? '現在位置で更新' : '現在位置を保存'}
+				</button>
+				<label>
+					<span class="visually-hidden">{sentence.text}の秒数</span>
+					<input type="number" min="0" step="0.1" placeholder="秒" value={pin?.atSeconds ?? ''} disabled={busy} onchange={(event) => updateTime(event, sentence.index)} />
+					<span class="seconds-unit">秒</span>
+				</label>
+				{#if pin}
+					<button type="button" disabled={busy} onclick={() => alignToSound(pin)}>音に合わせる</button>
+					<button type="button" disabled={busy || findAdjacentPinPosition(standardPositions, pin.atSeconds, 'previous') === undefined} onclick={() => moveToStandard(pin, 'previous')}>前の規定位置</button>
+					<button type="button" disabled={busy || findAdjacentPinPosition(standardPositions, pin.atSeconds, 'next') === undefined} onclick={() => moveToStandard(pin, 'next')}>次の規定位置</button>
+					<button class="delete-pin" type="button" disabled={busy} onclick={() => deletePin(sentence)}>削除</button>
+				{/if}
+			</div>
 		</div>
 	{/each}
-</section>
+</div>
 
 <style>
-	.pin-editor { margin-top: 20px; padding: 16px; border: 1px solid #cfcfcf; background: #fafafa; }
-	.editor-heading { display: flex; align-items: baseline; gap: 16px; margin-bottom: 12px; }
-	.editor-heading span { color: #555; font-size: .78rem; }
-	.editor-heading .error, .delete { color: #a32121; }
-	.editor-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 0; border-top: 1px solid #e2e2e2; }
-	.sentence-number { width: 42px; color: #666; font-size: .76rem; }
-	button, input { border: 1px solid #bbb; border-radius: 3px; background: #fff; font: inherit; font-size: .76rem; }
-	button { padding: 6px 9px; cursor: pointer; }
-	button:disabled { cursor: not-allowed; opacity: .45; }
-	label { display: inline-flex; align-items: center; gap: 4px; color: #555; font-size: .76rem; }
-	input { width: 76px; padding: 6px; }
+	.transcript-body { max-width: 920px; padding: 14px 0 4px; color: #222; font-size: 0.92rem; line-height: 1.6; }
+	.transcript-sentence { display: grid; grid-template-columns: minmax(220px, 1fr) auto; align-items: start; column-gap: 16px; padding-top: 8px; padding-bottom: 8px; border-top: 1px solid #ededed; }
+	.transcript-sentence.clickable { cursor: pointer; }
+	.transcript-sentence.clickable:hover .sentence-jump > span:last-child { text-decoration: underline; }
+	.transcript-sentence.clickable:focus-visible { border-radius: 2px; outline: 2px solid #2864dc; outline-offset: 2px; }
+	.sentence-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+	.sentence-bullet { flex: 0 0 auto; color: #888; }
+	.sentence-text { min-width: 0; }
+	.sentence-jump { display: inline-flex; align-items: baseline; gap: 9px; min-width: 0; color: #174ea6; }
+	.sentence-time { flex: 0 0 auto; color: #666; font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+	.sentence-editor { display: flex; align-items: center; justify-content: flex-end; gap: 5px; margin: 0; cursor: auto; }
+	.sentence-editor label { display: flex; align-items: center; gap: 3px; }
+	.sentence-editor input { width: 72px; height: 30px; padding: 0 5px; border: 1px solid #bbb; font: inherit; font-size: 0.74rem; font-variant-numeric: tabular-nums; }
+	.sentence-editor button { min-height: 30px; padding: 0 8px; border: 1px solid #999; background: #fff; color: #222; font: inherit; font-size: 0.7rem; cursor: pointer; }
+	.sentence-editor button:hover { border-color: #111; }
+	.sentence-editor button:disabled { color: #777; cursor: default; }
+	.sentence-editor .delete-pin { border-color: #c8a3a3; color: #9d2222; }
+	.seconds-unit { color: #666; font-size: 0.7rem; }
+	.track-adjustment { display: flex; grid-column: 2; align-items: center; flex-wrap: wrap; gap: 8px; }
+	.track-adjustment p { margin: 0; color: #555; font-size: 0.72rem; line-height: 1.5; }
+	.track-adjustment p.adjustment-error { color: #a12618; }
 	.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+	@media (max-width: 720px) {
+		.transcript-sentence { grid-template-columns: minmax(0, 1fr); row-gap: 7px; }
+		.sentence-editor { justify-content: flex-start; flex-wrap: wrap; margin-left: 18px; }
+		.track-adjustment { grid-column: 1; }
+	}
 </style>

@@ -74,6 +74,7 @@
 	let PinEditor = $state<Component<{
 		track: PlayableTrack;
 		sentences: TranscriptSentence[];
+		onactivate: (event: MouseEvent | KeyboardEvent, pin: AudioPin) => void;
 	}> | null>(null);
 	const expectedAudioFilenames = audioCatalog.flatMap((group) =>
 		group.lessons.flatMap((lesson) => lesson.tracks.map((track) => track.filename))
@@ -558,35 +559,40 @@
 												>Natural</button>
 											</div>
 										{/if}
-										<div class="transcript-body">
-											{#each lesson.transcript as sentence}
-												{@const pin = activeTrack ? pinFor(activeTrack, sentence.index) : undefined}
-												<div
-													class:clickable={activeTrack && pin}
-													class="transcript-sentence"
-													style={`padding-left: ${sentence.depth * 22}px`}
-													role="button"
-													tabindex={activeTrack && pin ? 0 : -1}
-													aria-disabled={!activeTrack || !pin}
-													onclick={(event) => activeTrack && pin && activateSentence(event, activeTrack, pin)}
-													onkeydown={(event) => activeTrack && pin && activateSentence(event, activeTrack, pin)}
-												>
-													<div class="sentence-line">
-														<span class="sentence-bullet" aria-hidden="true">–</span>
-														{#if activeTrack && pin}
-															<span class="sentence-jump">
-																<span class="sentence-time">{formatPinTime(pin.atSeconds)}</span>
-																<span>{sentence.text}</span>
-															</span>
-														{:else}
-															<span class="sentence-text">{sentence.text}</span>
-														{/if}
-													</div>
-											</div>
-										{/each}
-									</div>
 										{#if mode === 'edit' && PinEditor && activeTrack}
-											<PinEditor track={activeTrack} sentences={lesson.transcript} />
+											<PinEditor
+												track={activeTrack}
+												sentences={lesson.transcript}
+												onactivate={(event, pin) => activateSentence(event, activeTrack, pin)}
+											/>
+										{:else}
+											<div class="transcript-body">
+												{#each lesson.transcript as sentence}
+													{@const pin = activeTrack ? pinFor(activeTrack, sentence.index) : undefined}
+													<div
+														class:clickable={activeTrack && pin}
+														class="transcript-sentence"
+														style={`padding-left: ${sentence.depth * 22}px`}
+														role="button"
+														tabindex={activeTrack && pin ? 0 : -1}
+														aria-disabled={!activeTrack || !pin}
+														onclick={(event) => activeTrack && pin && activateSentence(event, activeTrack, pin)}
+														onkeydown={(event) => activeTrack && pin && activateSentence(event, activeTrack, pin)}
+													>
+														<div class="sentence-line">
+															<span class="sentence-bullet" aria-hidden="true">–</span>
+															{#if activeTrack && pin}
+																<span class="sentence-jump">
+																	<span class="sentence-time">{formatPinTime(pin.atSeconds)}</span>
+																	<span>{sentence.text}</span>
+																</span>
+															{:else}
+																<span class="sentence-text">{sentence.text}</span>
+															{/if}
+														</div>
+													</div>
+												{/each}
+											</div>
 										{/if}
 									</div>
 								{/if}
@@ -930,7 +936,7 @@
 
 	.transcript-sentence {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr);
+		grid-template-columns: minmax(220px, 1fr) auto;
 		align-items: start;
 		column-gap: 16px;
 		padding-top: 8px;
