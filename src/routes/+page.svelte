@@ -84,7 +84,6 @@
 	let pinErrors = $state<Record<string, string>>({});
 	let pinSaveVersions: Record<string, number> = {};
 	let pinDeleteStates = $state<Record<string, boolean>>({});
-	let playbackTimes = $state<Record<string, { current: number; duration: number }>>({});
 	let lastUsedAudio: HTMLAudioElement | null = null;
 	let adjustmentStates = $state<
 		Record<string, { busy: boolean; message: string; hasError: boolean }>
@@ -164,20 +163,6 @@
 		return `${minutes}:${String(seconds).padStart(2, '0')}.${tenths}`;
 	}
 
-	function formatPlaybackTime(secondsValue: number | undefined): string {
-		if (secondsValue === undefined || !Number.isFinite(secondsValue)) return '--:--.-';
-		return formatPinTime(Math.max(0, secondsValue));
-	}
-
-	function updatePlaybackTime(event: Event, filename: string) {
-		const audio = event.currentTarget;
-		if (!(audio instanceof HTMLAudioElement)) return;
-		playbackTimes[filename] = {
-			current: audio.currentTime,
-			duration: audio.duration
-		};
-	}
-
 	function rememberAudio(event: Event) {
 		const audio = event.currentTarget;
 		if (audio instanceof HTMLAudioElement) lastUsedAudio = audio;
@@ -194,11 +179,6 @@
 		if (!(audio instanceof HTMLAudioElement)) return;
 		pauseOtherAudios(audio);
 		lastUsedAudio = audio;
-	}
-
-	function updatePlaybackTimeAndRemember(event: Event, filename: string) {
-		updatePlaybackTime(event, filename);
-		rememberAudio(event);
 	}
 
 	function finishSeeking(event: Event) {
@@ -645,20 +625,12 @@
 			src={track.url}
 			data-filename={track.filename}
 			aria-label={ariaLabel}
-			onloadedmetadata={(event) => updatePlaybackTime(event, track.filename)}
-			ondurationchange={(event) => updatePlaybackTime(event, track.filename)}
-			ontimeupdate={(event) => updatePlaybackTime(event, track.filename)}
-			onseeking={(event) => updatePlaybackTimeAndRemember(event, track.filename)}
+			onseeking={rememberAudio}
 			onseeked={finishSeeking}
 			onpointerdown={rememberAudio}
 			onplay={handleAudioPlay}
 			onpause={rememberAudio}
 		></audio>
-		<output class="playback-time" aria-label={`${ariaLabel} playback time`}>
-			{formatPlaybackTime(playbackTimes[track.filename]?.current ?? 0)} / {formatPlaybackTime(
-				playbackTimes[track.filename]?.duration
-			)}
-		</output>
 	</div>
 {/snippet}
 
@@ -1247,15 +1219,6 @@
 		text-transform: uppercase;
 	}
 
-	.playback-time {
-		grid-column: 2;
-		margin-top: -7px;
-		color: #555;
-		font-size: 0.72rem;
-		font-variant-numeric: tabular-nums;
-		letter-spacing: 0.02em;
-	}
-
 	.track-adjustment {
 		display: flex;
 		grid-column: 2;
@@ -1502,7 +1465,6 @@
 			padding-left: 2px;
 		}
 
-		.playback-time,
 		.track-adjustment {
 			grid-column: 1;
 		}
