@@ -176,6 +176,19 @@
 		if (audio instanceof HTMLAudioElement) lastUsedAudio = audio;
 	}
 
+	function pauseOtherAudios(activeAudio: HTMLAudioElement) {
+		for (const audio of document.querySelectorAll('audio')) {
+			if (audio !== activeAudio && !audio.paused) audio.pause();
+		}
+	}
+
+	function handleAudioPlay(event: Event) {
+		const audio = event.currentTarget;
+		if (!(audio instanceof HTMLAudioElement)) return;
+		pauseOtherAudios(audio);
+		lastUsedAudio = audio;
+	}
+
 	function updatePlaybackTimeAndRemember(event: Event, filename: string) {
 		updatePlaybackTime(event, filename);
 		rememberAudio(event);
@@ -225,6 +238,7 @@
 		const player = (event.currentTarget as HTMLElement).closest('.player');
 		const audio = player?.querySelector('audio');
 		if (!audio) return;
+		pauseOtherAudios(audio);
 		audio.currentTime = pin.atSeconds;
 		await audio.play().catch(() => undefined);
 	}
@@ -603,7 +617,7 @@
 			onseeking={(event) => updatePlaybackTimeAndRemember(event, track.filename)}
 			onseeked={finishSeeking}
 			onpointerdown={rememberAudio}
-			onplay={rememberAudio}
+			onplay={handleAudioPlay}
 			onpause={rememberAudio}
 		></audio>
 		<output class="playback-time" aria-label={`${ariaLabel} playback time`}>
