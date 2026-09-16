@@ -92,6 +92,24 @@
 		objectUrls = [];
 	}
 
+	async function loadDevelopmentPins() {
+		if (!isDevelopment) return;
+		try {
+			const response = await fetch('/api/pins');
+			if (!response.ok) throw new Error();
+			const allPins = (await response.json()) as Record<string, AudioPin[]>;
+			for (const group of audioCatalog) {
+				for (const lesson of group.lessons) {
+					for (const track of lesson.tracks) {
+						track.pins = allPins[track.filename] ?? track.pins;
+					}
+				}
+			}
+		} catch {
+			console.warn('保存済みの編集データを読み込めませんでした。');
+		}
+	}
+
 	function buildUnits(
 		files: File[],
 		transcripts: Record<string, TranscriptSentence[]> = {}
@@ -434,6 +452,7 @@
 			if (!navigator.storage?.getDirectory) {
 				throw new Error('このブラウザは端末内への教材保存に対応していません。');
 			}
+			await loadDevelopmentPins();
 			const manifest = await getLibraryManifest();
 			if (manifest) await loadStoredLibrary(manifest);
 			else phase = 'choose';
