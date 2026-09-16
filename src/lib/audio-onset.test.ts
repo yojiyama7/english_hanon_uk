@@ -53,10 +53,19 @@ test('reports when no later onset exists', () => {
 	assert.deepEqual(adjustPinToNextOnset(envelope, 0.2), { ok: false, reason: 'no-onset' });
 });
 
-test('requires a full 0.4 seconds of silence before an onset', () => {
+test('uses zero for an onset with less than 0.4 seconds of silence at the start', () => {
 	const envelope = createAudioEnvelope([samplesWithSound([[0.2, 0.8]])], sampleRate);
-	assert.deepEqual(adjustPinToNextOnset(envelope, 0), { ok: false, reason: 'no-onset' });
-	assert.deepEqual(findStandardPinPositions(envelope), []);
+	assert.deepEqual(adjustPinToNextOnset(envelope, 0), {
+		ok: true,
+		atSeconds: 0,
+		onsetSeconds: 0.2
+	});
+	assert.deepEqual(findStandardPinPositions(envelope), [0]);
+});
+
+test('uses zero when sound begins at the start of the audio', () => {
+	const envelope = createAudioEnvelope([samplesWithSound([[0, 0.8]])], sampleRate);
+	assert.deepEqual(findStandardPinPositions(envelope), [0]);
 });
 
 test('lists onsets preceded by at least 0.4 seconds of silence as standard positions', () => {

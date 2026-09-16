@@ -111,13 +111,10 @@ function hasLeadSilence(envelope: AudioEnvelope, onsetFrame: number, threshold: 
 	const requiredLeadSilentFrames = Math.ceil(
 		requiredLeadSilenceSeconds / envelope.frameDurationSeconds
 	);
-	const silenceStart = onsetFrame - requiredLeadSilentFrames;
-	return (
-		silenceStart >= 0 &&
-		envelope.frames
-			.subarray(silenceStart, onsetFrame)
-			.every((frame) => frame < threshold)
-	);
+	const silenceStart = Math.max(0, onsetFrame - requiredLeadSilentFrames);
+	return envelope.frames
+		.subarray(silenceStart, onsetFrame)
+		.every((frame) => frame < threshold);
 }
 
 function findOnsetFrames(envelope: AudioEnvelope, startFrame = 0): number[] {
@@ -146,7 +143,10 @@ function findOnsetFrames(envelope: AudioEnvelope, startFrame = 0): number[] {
 
 function pinPositionForOnset(envelope: AudioEnvelope, onsetFrame: number): number {
 	const onsetSeconds = onsetFrame * envelope.frameDurationSeconds;
-	return Math.floor((onsetSeconds - requiredLeadSilenceSeconds) * 10 + 1e-8) / 10;
+	return Math.max(
+		0,
+		Math.floor((onsetSeconds - requiredLeadSilenceSeconds) * 10 + 1e-8) / 10
+	);
 }
 
 export function findStandardPinPositions(envelope: AudioEnvelope): number[] {
