@@ -247,7 +247,7 @@
 </div>
 
 <style>
-	.transcript-body { max-width: 920px; padding: 14px 0 4px; color: #222; font-size: 0.92rem; line-height: 1.6; }
+	.transcript-body { max-width: 920px; padding: 14px 0 4px; color: #222; font-size: 1.38rem; line-height: 1.6; }
 	.transcript-sentence { display: grid; grid-template-columns: minmax(220px, 1fr) auto; align-items: start; column-gap: 16px; padding-top: 8px; padding-bottom: 8px; border-top: 1px solid #ededed; }
 	.transcript-sentence.clickable { cursor: pointer; }
 	.transcript-sentence.clickable:hover .sentence-jump > span:last-child { text-decoration: underline; }
