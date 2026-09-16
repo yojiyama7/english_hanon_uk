@@ -7,6 +7,7 @@ const weakNoiseMarginDb = 6;
 const requiredSilentFrames = 3;
 const requiredSoundFrames = 5;
 const requiredLeadSilenceSeconds = 0.4;
+const requiredLeadSilenceRatio = 0.94;
 const weakOnsetLookbackSeconds = 0.25;
 
 export type AudioEnvelope = {
@@ -112,9 +113,13 @@ function hasLeadSilence(envelope: AudioEnvelope, onsetFrame: number, threshold: 
 		requiredLeadSilenceSeconds / envelope.frameDurationSeconds
 	);
 	const silenceStart = Math.max(0, onsetFrame - requiredLeadSilentFrames);
-	return envelope.frames
-		.subarray(silenceStart, onsetFrame)
-		.every((frame) => frame < threshold);
+	const leadFrames = envelope.frames.subarray(silenceStart, onsetFrame);
+	if (leadFrames.length === 0) return true;
+	let silentFrames = 0;
+	for (const frame of leadFrames) {
+		if (frame < threshold) silentFrames += 1;
+	}
+	return silentFrames / leadFrames.length >= requiredLeadSilenceRatio;
 }
 
 function findOnsetFrames(envelope: AudioEnvelope, startFrame = 0): number[] {

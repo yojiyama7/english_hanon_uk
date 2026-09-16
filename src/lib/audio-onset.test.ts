@@ -76,6 +76,14 @@ test('lists onsets preceded by at least 0.4 seconds of silence as standard posit
 	assert.deepEqual(findStandardPinPositions(envelope), [0.1, 0.7, 1.3]);
 });
 
+test('allows a brief sound when at least 94 percent of the lead interval is silent', () => {
+	const envelope = createAudioEnvelope(
+		[samplesWithSound([[0.69, 0.7], [0.72, 1]])],
+		sampleRate
+	);
+	assert.deepEqual(findStandardPinPositions(envelope), [0.3]);
+});
+
 test('rejects onsets when the preceding 0.4 seconds contains sound', () => {
 	const envelope = createAudioEnvelope(
 		[samplesWithSound([[0.2, 0.23], [0.5, 0.7], [1, 1.2], [1.7, 1.9]], 2.1)],
