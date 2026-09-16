@@ -920,7 +920,7 @@
 		max-width: 920px;
 		padding: 14px 0 4px;
 		color: #222;
-		font-size: 0.92rem;
+		font-size: 1.38rem;
 		line-height: 1.6;
 	}
 
