@@ -68,28 +68,40 @@ test('uses zero when sound begins at the start of the audio', () => {
 	assert.deepEqual(findStandardPinPositions(envelope), [0]);
 });
 
-test('lists onsets preceded by at least 0.4 seconds of silence as standard positions', () => {
+test('lists onsets preceded by at least 1 second of silence as standard positions', () => {
 	const envelope = createAudioEnvelope(
-		[samplesWithSound([[0.5, 0.7], [1.1, 1.3], [1.7, 1.9]])],
+		[samplesWithSound([[1.1, 1.3], [2.4, 2.6], [3.7, 3.9]], 4.2)],
 		sampleRate
 	);
-	assert.deepEqual(findStandardPinPositions(envelope), [0.1, 0.7, 1.3]);
+	assert.deepEqual(findStandardPinPositions(envelope), [0.7, 2, 3.3]);
 });
 
-test('allows a brief sound when at least 94 percent of the lead interval is silent', () => {
+test('allows brief sounds when at least 90 percent of the 1 second lead interval is silent', () => {
 	const envelope = createAudioEnvelope(
-		[samplesWithSound([[0.69, 0.7], [0.72, 1]])],
+		[samplesWithSound([[0.3, 0.33], [0.6, 0.63], [0.9, 0.93], [1.2, 1.5]])],
 		sampleRate
 	);
-	assert.deepEqual(findStandardPinPositions(envelope), [0.3]);
+	assert.deepEqual(findStandardPinPositions(envelope), [0.8]);
 });
 
-test('rejects onsets when the preceding 0.4 seconds contains sound', () => {
+test('rejects onsets when less than 90 percent of the 1 second lead interval is silent', () => {
 	const envelope = createAudioEnvelope(
-		[samplesWithSound([[0.2, 0.23], [0.5, 0.7], [1, 1.2], [1.7, 1.9]], 2.1)],
+		[
+			samplesWithSound(
+				[
+					[0.3, 0.33],
+					[0.5, 0.53],
+					[0.7, 0.73],
+					[0.9, 0.93],
+					[1.2, 1.5],
+					[2.6, 2.9]
+				],
+				3.1
+			)
+		],
 		sampleRate
 	);
-	assert.deepEqual(findStandardPinPositions(envelope), [1.3]);
+	assert.deepEqual(findStandardPinPositions(envelope), [2.2]);
 });
 
 test('uses a sustained weak onset shortly before confirmed sound', () => {
@@ -107,17 +119,17 @@ test('uses a sustained weak onset shortly before confirmed sound', () => {
 
 test('does not create a position for weak sound without nearby confirmed sound', () => {
 	const envelope = createAudioEnvelope(
-		[samplesWithLevels([[0.6, 0.7, 0.0003], [1.2, 1.5, 0.1]])],
+		[samplesWithLevels([[0.05, 0.15, 0.0003], [1.2, 1.5, 0.1]])],
 		sampleRate
 	);
 	assert.deepEqual(findStandardPinPositions(envelope), [0.8]);
 });
 
-test('rejects a weak onset without 0.4 seconds of preceding silence', () => {
+test('rejects a weak onset without enough preceding silence', () => {
 	const envelope = createAudioEnvelope(
 		[
 			samplesWithLevels([
-				[0.5, 0.55, 0.0003],
+				[0.5, 0.6, 0.0003],
 				[0.75, 0.85, 0.0003],
 				[0.9, 1.2, 0.1]
 			])

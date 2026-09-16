@@ -6,8 +6,9 @@ const minimumWeakThresholdDb = -75;
 const weakNoiseMarginDb = 6;
 const requiredSilentFrames = 3;
 const requiredSoundFrames = 5;
-const requiredLeadSilenceSeconds = 0.4;
-const requiredLeadSilenceRatio = 0.94;
+const requiredLeadSilenceSeconds = 1;
+const requiredLeadSilenceRatio = 0.9;
+const pinLeadSeconds = 0.4;
 const weakOnsetLookbackSeconds = 0.25;
 
 export type AudioEnvelope = {
@@ -150,7 +151,7 @@ function pinPositionForOnset(envelope: AudioEnvelope, onsetFrame: number): numbe
 	const onsetSeconds = onsetFrame * envelope.frameDurationSeconds;
 	return Math.max(
 		0,
-		Math.floor((onsetSeconds - requiredLeadSilenceSeconds) * 10 + 1e-8) / 10
+		Math.floor((onsetSeconds - pinLeadSeconds) * 10 + 1e-8) / 10
 	);
 }
 
