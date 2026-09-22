@@ -194,7 +194,6 @@
 
 	function toggleLastUsedAudio(event: KeyboardEvent) {
 		if (event.code !== 'Space') return;
-		if (isKeyboardControlTarget(event.target)) return;
 		event.preventDefault();
 		event.stopPropagation();
 		if (event.repeat || !lastUsedAudio) return;
@@ -208,18 +207,8 @@
 
 	function preventSpaceDefault(event: KeyboardEvent) {
 		if (event.code !== 'Space') return;
-		if (isKeyboardControlTarget(event.target)) return;
 		event.preventDefault();
 		event.stopPropagation();
-	}
-
-	function isKeyboardControlTarget(target: EventTarget | null): boolean {
-		return (
-			target instanceof HTMLInputElement ||
-			target instanceof HTMLTextAreaElement ||
-			(target instanceof HTMLElement &&
-				(target.isContentEditable || target.closest('button, audio, [role="button"]') !== null))
-		);
 	}
 
 	function audioForTrack(track: PlayableTrack): HTMLAudioElement | null {
@@ -250,7 +239,7 @@
 	function toggleTranscript(event: MouseEvent | KeyboardEvent, lesson: Lesson) {
 		if (!lesson.transcript) return;
 		if (event instanceof KeyboardEvent) {
-			if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+			if (event.target !== event.currentTarget || event.key !== 'Enter') return;
 			event.preventDefault();
 		} else if (isWithin(event.target, 'audio, button, input, label, .transcript')) {
 			return;
@@ -265,7 +254,7 @@
 		pin: AudioPin
 	) {
 		if (event instanceof KeyboardEvent) {
-			if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+			if (event.target !== event.currentTarget || event.key !== 'Enter') return;
 			event.preventDefault();
 		}
 		void jumpToPin(track, pin);
