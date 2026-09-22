@@ -196,6 +196,10 @@
 		if (event.code !== 'Space') return;
 		event.preventDefault();
 		event.stopPropagation();
+		// Keyboard input can turn a clicked label's focus into a visible selection outline.
+		if (event.target instanceof HTMLElement && event.target.matches('[role="button"]')) {
+			event.target.blur();
+		}
 		if (event.repeat || !lastUsedAudio) return;
 
 		if (lastUsedAudio.paused) {
