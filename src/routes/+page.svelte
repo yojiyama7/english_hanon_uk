@@ -554,23 +554,25 @@
 
 								{#if lesson.transcript && transcriptOpenStates[transcriptKey]}
 									<div class="transcript">
-										<p class="transcript-label">文字起こし</p>
-										{#if lesson.tracks.slow && lesson.tracks.natural}
-											<div class="track-toggle" role="group" aria-label={`${lesson.title} 再生音源`}>
-												<button
-													type="button"
-													class:active={(selectedTrackKinds[lessonId(lesson.unit, lesson.section)] ?? 'slow') === 'slow'}
-													aria-pressed={(selectedTrackKinds[lessonId(lesson.unit, lesson.section)] ?? 'slow') === 'slow'}
-													onclick={() => selectTrack(lesson, 'slow')}
-												>Slow</button>
-												<button
-													type="button"
-													class:active={selectedTrackKinds[lessonId(lesson.unit, lesson.section)] === 'natural'}
-													aria-pressed={selectedTrackKinds[lessonId(lesson.unit, lesson.section)] === 'natural'}
-													onclick={() => selectTrack(lesson, 'natural')}
-												>Natural</button>
-											</div>
-										{/if}
+										<div class="transcript-header">
+											<p class="transcript-label">文字起こし</p>
+											{#if lesson.tracks.slow && lesson.tracks.natural}
+												<div class="track-toggle" role="group" aria-label={`${lesson.title} 再生音源`}>
+													<button
+														type="button"
+														class:active={(selectedTrackKinds[lessonId(lesson.unit, lesson.section)] ?? 'slow') === 'slow'}
+														aria-pressed={(selectedTrackKinds[lessonId(lesson.unit, lesson.section)] ?? 'slow') === 'slow'}
+														onclick={() => selectTrack(lesson, 'slow')}
+													>Slow</button>
+													<button
+														type="button"
+														class:active={selectedTrackKinds[lessonId(lesson.unit, lesson.section)] === 'natural'}
+														aria-pressed={selectedTrackKinds[lessonId(lesson.unit, lesson.section)] === 'natural'}
+														onclick={() => selectTrack(lesson, 'natural')}
+													>Natural</button>
+												</div>
+											{/if}
+										</div>
 										{#if mode === 'edit' && PinEditor && activeTrack}
 											<PinEditor
 												track={activeTrack}
@@ -903,10 +905,16 @@
 
 	.transcript-label {
 		margin: 0;
-		padding: 10px 0 2px;
 		color: #444;
 		font-size: 0.78rem;
 		font-weight: 650;
+	}
+
+	.transcript-header {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 10px 0 2px;
 	}
 
 	.transcript-body {
@@ -919,7 +927,6 @@
 
 	.track-toggle {
 		display: inline-flex;
-		margin-top: 12px;
 		border: 1px solid #aaa;
 		border-radius: 999px;
 		overflow: hidden;
