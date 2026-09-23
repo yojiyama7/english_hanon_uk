@@ -68,6 +68,7 @@
 	let objectUrls: string[] = [];
 	let selectedTrackKinds = $state<Record<string, 'slow' | 'natural'>>({});
 	let transcriptOpenStates = $state<Record<string, boolean>>({});
+	let transcriptStatuses = $state<Record<string, { message: string; hasError: boolean }>>({});
 	let lastUsedAudio: HTMLAudioElement | null = null;
 	const isDevelopment = import.meta.env.DEV;
 	let mode = $state<'view' | 'edit'>('view');
@@ -75,6 +76,7 @@
 		track: PlayableTrack;
 		sentences: TranscriptSentence[];
 		onactivate: (event: MouseEvent | KeyboardEvent, pin: AudioPin) => void;
+		onstatuschange: (message: string, hasError: boolean) => void;
 	}> | null>(null);
 	const expectedAudioFilenames = audioCatalog.flatMap((group) =>
 		group.lessons.flatMap((lesson) => lesson.tracks.map((track) => track.filename))
@@ -230,6 +232,14 @@
 	function selectTrack(lesson: Lesson, kind: 'slow' | 'natural') {
 		const key = lessonId(lesson.unit, lesson.section);
 		selectedTrackKinds[key] = kind;
+	}
+
+	function updateTranscriptStatus(key: string, message: string, hasError: boolean) {
+		if (message) {
+			transcriptStatuses[key] = { message, hasError };
+		} else {
+			delete transcriptStatuses[key];
+		}
 	}
 
 	function pinFor(track: PlayableTrack, sentenceIndex: number): AudioPin | undefined {
@@ -556,28 +566,36 @@
 									<div class="transcript">
 										<div class="transcript-header">
 											<p class="transcript-label">文字起こし</p>
-											{#if lesson.tracks.slow && lesson.tracks.natural}
-												<div class="track-toggle" role="group" aria-label={`${lesson.title} 再生音源`}>
-													<button
-														type="button"
-														class:active={(selectedTrackKinds[lessonId(lesson.unit, lesson.section)] ?? 'slow') === 'slow'}
-														aria-pressed={(selectedTrackKinds[lessonId(lesson.unit, lesson.section)] ?? 'slow') === 'slow'}
-														onclick={() => selectTrack(lesson, 'slow')}
-													>Slow</button>
-													<button
-														type="button"
-														class:active={selectedTrackKinds[lessonId(lesson.unit, lesson.section)] === 'natural'}
-														aria-pressed={selectedTrackKinds[lessonId(lesson.unit, lesson.section)] === 'natural'}
-														onclick={() => selectTrack(lesson, 'natural')}
-													>Natural</button>
-												</div>
+											{#if mode === 'edit' && transcriptStatuses[transcriptKey]}
+												<p
+													class:transcript-status-error={transcriptStatuses[transcriptKey].hasError}
+													class="transcript-status"
+													aria-live="polite"
+												>{transcriptStatuses[transcriptKey].message}</p>
 											{/if}
 										</div>
+										{#if lesson.tracks.slow && lesson.tracks.natural}
+											<div class="track-toggle" role="group" aria-label={`${lesson.title} 再生音源`}>
+												<button
+													type="button"
+													class:active={(selectedTrackKinds[lessonId(lesson.unit, lesson.section)] ?? 'slow') === 'slow'}
+													aria-pressed={(selectedTrackKinds[lessonId(lesson.unit, lesson.section)] ?? 'slow') === 'slow'}
+													onclick={() => selectTrack(lesson, 'slow')}
+												>Slow</button>
+												<button
+													type="button"
+													class:active={selectedTrackKinds[lessonId(lesson.unit, lesson.section)] === 'natural'}
+													aria-pressed={selectedTrackKinds[lessonId(lesson.unit, lesson.section)] === 'natural'}
+													onclick={() => selectTrack(lesson, 'natural')}
+												>Natural</button>
+											</div>
+										{/if}
 										{#if mode === 'edit' && PinEditor && activeTrack}
 											<PinEditor
 												track={activeTrack}
 												sentences={lesson.transcript}
 												onactivate={(event, pin) => activateSentence(event, activeTrack, pin)}
+												onstatuschange={(message, hasError) => updateTranscriptStatus(transcriptKey, message, hasError)}
 											/>
 										{:else}
 											<div class="transcript-body">
@@ -917,6 +935,17 @@
 		padding: 10px 0 2px;
 	}
 
+	.transcript-status {
+		margin: 0;
+		color: #555;
+		font-size: 0.72rem;
+		line-height: 1.5;
+	}
+
+	.transcript-status.transcript-status-error {
+		color: #a12618;
+	}
+
 	.transcript-body {
 		max-width: 920px;
 		padding: 14px 0 4px;
@@ -927,6 +956,7 @@
 
 	.track-toggle {
 		display: inline-flex;
+		margin-top: 12px;
 		border: 1px solid #aaa;
 		border-radius: 999px;
 		overflow: hidden;

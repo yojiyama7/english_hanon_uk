@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import type { AudioPin } from '$lib/audio-catalog';
 	import {
 		adjustPinToNextOnset,
@@ -15,11 +16,13 @@
 	let {
 		track,
 		sentences,
-		onactivate
+		onactivate,
+		onstatuschange
 	}: {
 		track: PlayableTrack;
 		sentences: TranscriptSentence[];
 		onactivate: (event: MouseEvent | KeyboardEvent, pin: AudioPin) => void;
+		onstatuschange: (message: string, hasError: boolean) => void;
 	} = $props();
 	let busy = $state(false);
 	let message = $state('');
@@ -99,6 +102,12 @@
 		if (pinsLoadedFor !== track.filename) void loadPins();
 		if (standardPositionsFor !== track.url) void loadStandardPositions();
 	});
+
+	$effect(() => {
+		onstatuschange(message, hasError);
+	});
+
+	onDestroy(() => onstatuschange('', false));
 
 	async function savePin(sentenceIndex: number, atSeconds: number) {
 		const previousPins = track.pins;
@@ -197,11 +206,6 @@
 	}
 </script>
 
-{#if message}
-	<div class="track-adjustment">
-		<p class:adjustment-error={hasError} aria-live="polite">{message}</p>
-	</div>
-	{/if}
 <div class="transcript-body">
 	{#each sentences as sentence}
 		{@const pin = pinFor(sentence.index)}
@@ -265,14 +269,10 @@
 	.sentence-editor button:disabled { color: #777; cursor: default; }
 	.sentence-editor .delete-pin { border-color: #c8a3a3; color: #9d2222; }
 	.seconds-unit { color: #666; font-size: 0.7rem; }
-	.track-adjustment { display: flex; grid-column: 2; align-items: center; flex-wrap: wrap; gap: 8px; }
-	.track-adjustment p { margin: 0; color: #555; font-size: 0.72rem; line-height: 1.5; }
-	.track-adjustment p.adjustment-error { color: #a12618; }
 	.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 	@media (max-width: 720px) {
 		.transcript-sentence { grid-template-columns: minmax(0, 1fr); row-gap: 7px; }
 		.sentence-editor { justify-content: flex-start; flex-wrap: wrap; margin-left: 18px; }
-		.track-adjustment { grid-column: 1; }
 	}
 </style>
