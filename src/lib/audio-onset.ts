@@ -9,7 +9,7 @@ const requiredSoundFrames = 5;
 const requiredLeadSilenceSeconds = 1;
 const requiredLeadSilenceRatio = 0.9;
 const pinLeadSeconds = 0.4;
-const weakOnsetLookbackSeconds = 0.25;
+const weakOnsetLookbackSeconds = 0.35;
 
 export type AudioEnvelope = {
 	frames: Float32Array;

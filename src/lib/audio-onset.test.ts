@@ -117,6 +117,14 @@ test('uses a sustained weak onset shortly before confirmed sound', () => {
 	assert.deepEqual(findStandardPinPositions(envelope), [0.4]);
 });
 
+test('uses a sustained weak onset 0.3 seconds before confirmed sound', () => {
+	const envelope = createAudioEnvelope(
+		[samplesWithLevels([[0.8, 0.9, 0.0003], [1.1, 1.4, 0.1]])],
+		sampleRate
+	);
+	assert.deepEqual(findStandardPinPositions(envelope), [0.4]);
+});
+
 test('does not create a position for weak sound without nearby confirmed sound', () => {
 	const envelope = createAudioEnvelope(
 		[samplesWithLevels([[0.05, 0.15, 0.0003], [1.2, 1.5, 0.1]])],
