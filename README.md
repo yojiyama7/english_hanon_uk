@@ -37,6 +37,13 @@ English Hanonの音声と文字起こしを、ユーザーが端末上で選択�
 
 「音に合わせる」は、0.4秒以上の連続した無音のあとにある次の発音開始をブラウザ内で検出し、その発音開始の0.4秒前へピンを移動します。弱い発音から主音へ続く場合は、主音直前の弱い立ち上がりも検出します。ピン位置ですでに音が出ている場合は変更しません。この位置を0.1秒単位で切り捨てたものを規定位置として扱い、「前の規定位置」と「次の規定位置」でピンを前後に移動できます。移動後は音声プレイヤーもその位置へ頭出ししますが、自動再生はしません。
 
+Slow音源の未設定ピンは、`ffmpeg` と `ffprobe` が利用できる環境で一括補完できます。既定ではドライランだけを行い、`--write` を付けた場合だけ `src/lib/audio-pins.json` を更新します。
+
+```sh
+npm run pins:auto-assign-slow
+npm run pins:auto-assign-slow -- --write
+```
+
 ## Creating a project
 
 If you're seeing this, you've probably already done this step. Congrats!
