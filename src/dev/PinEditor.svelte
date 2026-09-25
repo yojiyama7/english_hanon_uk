@@ -158,6 +158,7 @@
 	}
 
 	async function moveToStandard(pin: AudioPin, direction: PinPositionDirection) {
+		if (busy) return;
 		const atSeconds = findAdjacentPinPosition(standardPositions, pin.atSeconds, direction);
 		if (atSeconds === undefined) return;
 		await run('ピンを保存中…', async () => {
@@ -241,8 +242,18 @@
 				</label>
 				{#if pin}
 					<button type="button" disabled={busy} onclick={() => alignToSound(pin)}>音に合わせる</button>
-					<button type="button" disabled={busy || findAdjacentPinPosition(standardPositions, pin.atSeconds, 'previous') === undefined} onclick={() => moveToStandard(pin, 'previous')}>前の規定位置</button>
-					<button type="button" disabled={busy || findAdjacentPinPosition(standardPositions, pin.atSeconds, 'next') === undefined} onclick={() => moveToStandard(pin, 'next')}>次の規定位置</button>
+					<button
+						type="button"
+						disabled={findAdjacentPinPosition(standardPositions, pin.atSeconds, 'previous') === undefined}
+						aria-disabled={busy || findAdjacentPinPosition(standardPositions, pin.atSeconds, 'previous') === undefined}
+						onclick={() => moveToStandard(pin, 'previous')}
+					>前の規定位置</button>
+					<button
+						type="button"
+						disabled={findAdjacentPinPosition(standardPositions, pin.atSeconds, 'next') === undefined}
+						aria-disabled={busy || findAdjacentPinPosition(standardPositions, pin.atSeconds, 'next') === undefined}
+						onclick={() => moveToStandard(pin, 'next')}
+					>次の規定位置</button>
 					<button class="delete-pin" type="button" disabled={busy} onclick={() => deletePin(sentence)}>削除</button>
 				{/if}
 			</div>
