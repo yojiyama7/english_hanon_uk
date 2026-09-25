@@ -6,6 +6,8 @@ const minimumWeakThresholdDb = -75;
 const weakNoiseMarginDb = 6;
 const requiredSilentFrames = 3;
 const requiredSoundFrames = 5;
+const weakActivityWindowFrames = 8;
+const requiredWeakActivityFrames = 5;
 const requiredLeadSilenceSeconds = 1;
 const requiredLeadSilenceRatio = 0.9;
 const pinLeadSeconds = 0.4;
@@ -124,20 +126,43 @@ function hasLeadSilence(envelope: AudioEnvelope, onsetFrame: number, threshold: 
 	return silentFrames / leadFrames.length >= requiredLeadSilenceRatio;
 }
 
+function findWeakOnsetFrame(
+	envelope: AudioEnvelope,
+	threshold: number,
+	startFrame: number,
+	strongOnsetFrame: number
+): number | undefined {
+	for (let candidate = startFrame; candidate <= strongOnsetFrame; candidate += 1) {
+		if (envelope.frames[candidate] < threshold) continue;
+		if (candidate > 0 && envelope.frames[candidate - 1] >= threshold) continue;
+		const activityEnd = Math.min(candidate + weakActivityWindowFrames, envelope.frames.length);
+		let activeFrames = 0;
+		for (let index = candidate; index < activityEnd; index += 1) {
+			if (envelope.frames[index] >= threshold) activeFrames += 1;
+		}
+		if (
+			activeFrames >= requiredWeakActivityFrames &&
+			hasLeadSilence(envelope, candidate, threshold)
+		) {
+			return candidate;
+		}
+	}
+	return undefined;
+}
+
 function findOnsetFrames(envelope: AudioEnvelope, startFrame = 0): number[] {
 	const weakThreshold = weakThresholdFor(envelope);
 	const weakOnsetLookbackFrames = Math.ceil(
 		weakOnsetLookbackSeconds / envelope.frameDurationSeconds
 	);
-	const weakOnsetFrames = findSustainedOnsetFrames(envelope, weakThreshold, startFrame);
 	const onsetFrames = findSustainedOnsetFrames(envelope, envelope.threshold, startFrame).flatMap(
 		(strongOnsetFrame) => {
 			const earliestWeakFrame = Math.max(startFrame, strongOnsetFrame - weakOnsetLookbackFrames);
-			const weakOnsetFrame = weakOnsetFrames.find(
-				(frame) =>
-					frame >= earliestWeakFrame &&
-					frame <= strongOnsetFrame &&
-					hasLeadSilence(envelope, frame, weakThreshold)
+			const weakOnsetFrame = findWeakOnsetFrame(
+				envelope,
+				weakThreshold,
+				earliestWeakFrame,
+				strongOnsetFrame
 			);
 			if (weakOnsetFrame !== undefined) return [weakOnsetFrame];
 			return hasLeadSilence(envelope, strongOnsetFrame, weakThreshold)

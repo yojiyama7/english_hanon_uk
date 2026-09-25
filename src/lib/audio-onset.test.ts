@@ -125,6 +125,42 @@ test('uses a sustained weak onset 0.3 seconds before confirmed sound', () => {
 	assert.deepEqual(findStandardPinPositions(envelope), [0.4]);
 });
 
+test('uses the first intermittent weak onset when five of eight frames contain sound', () => {
+	const envelope = createAudioEnvelope(
+		[
+			samplesWithLevels([
+				[0.8, 0.82, 0.0003],
+				[0.83, 0.85, 0.0003],
+				[0.86, 0.88, 0.0003],
+				[1.1, 1.4, 0.1]
+			])
+		],
+		sampleRate
+	);
+	assert.deepEqual(adjustPinToNextOnset(envelope, 0.2), {
+		ok: true,
+		atSeconds: 0.4,
+		onsetSeconds: 0.8
+	});
+	assert.deepEqual(findStandardPinPositions(envelope), [0.4]);
+});
+
+test('ignores intermittent weak noise with fewer than five active frames', () => {
+	const envelope = createAudioEnvelope(
+		[samplesWithLevels([[0.8, 0.84, 0.0003], [1.1, 1.4, 0.1]])],
+		sampleRate
+	);
+	assert.deepEqual(findStandardPinPositions(envelope), [0.7]);
+});
+
+test('ignores a weak onset more than 0.35 seconds before confirmed sound', () => {
+	const envelope = createAudioEnvelope(
+		[samplesWithLevels([[0.7, 0.8, 0.0003], [1.1, 1.4, 0.1]])],
+		sampleRate
+	);
+	assert.deepEqual(findStandardPinPositions(envelope), [0.7]);
+});
+
 test('keeps the first standard position and suppresses later positions within one second', () => {
 	const envelope = createAudioEnvelope(
 		[samplesWithSound([[1.2, 1.26], [1.5, 1.8]])],
