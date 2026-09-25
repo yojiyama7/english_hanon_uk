@@ -10,6 +10,7 @@ const requiredLeadSilenceSeconds = 1;
 const requiredLeadSilenceRatio = 0.9;
 const pinLeadSeconds = 0.4;
 const weakOnsetLookbackSeconds = 0.35;
+const minimumStandardPositionGapSeconds = 1;
 
 export type AudioEnvelope = {
 	frames: Float32Array;
@@ -156,7 +157,17 @@ function pinPositionForOnset(envelope: AudioEnvelope, onsetFrame: number): numbe
 }
 
 export function findStandardPinPositions(envelope: AudioEnvelope): number[] {
-	return [...new Set(findOnsetFrames(envelope).map((frame) => pinPositionForOnset(envelope, frame)))];
+	const candidates = [
+		...new Set(findOnsetFrames(envelope).map((frame) => pinPositionForOnset(envelope, frame)))
+	];
+	const positions: number[] = [];
+	for (const candidate of candidates) {
+		const previous = positions.at(-1);
+		if (previous === undefined || candidate - previous >= minimumStandardPositionGapSeconds) {
+			positions.push(candidate);
+		}
+	}
+	return positions;
 }
 
 export function findAdjacentPinPosition(

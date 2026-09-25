@@ -125,6 +125,22 @@ test('uses a sustained weak onset 0.3 seconds before confirmed sound', () => {
 	assert.deepEqual(findStandardPinPositions(envelope), [0.4]);
 });
 
+test('keeps the first standard position and suppresses later positions within one second', () => {
+	const envelope = createAudioEnvelope(
+		[samplesWithSound([[1.2, 1.26], [1.5, 1.8]])],
+		sampleRate
+	);
+	assert.deepEqual(findStandardPinPositions(envelope), [0.8]);
+});
+
+test('allows another standard position exactly one second after the previous position', () => {
+	const envelope = createAudioEnvelope(
+		[samplesWithSound([[1.2, 1.26], [2.2, 2.5]], 2.7)],
+		sampleRate
+	);
+	assert.deepEqual(findStandardPinPositions(envelope), [0.8, 1.8]);
+});
+
 test('does not create a position for weak sound without nearby confirmed sound', () => {
 	const envelope = createAudioEnvelope(
 		[samplesWithLevels([[0.05, 0.15, 0.0003], [1.2, 1.5, 0.1]])],
