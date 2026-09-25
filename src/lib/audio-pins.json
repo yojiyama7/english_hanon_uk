@@ -600,7 +600,7 @@
 		},
 		{
 			"sentenceIndex": 5,
-			"atSeconds": 47.8
+			"atSeconds": 51.2
 		},
 		{
 			"sentenceIndex": 6,
@@ -608,7 +608,7 @@
 		},
 		{
 			"sentenceIndex": 7,
-			"atSeconds": 69
+			"atSeconds": 72
 		},
 		{
 			"sentenceIndex": 8,
@@ -1200,7 +1200,7 @@
 		},
 		{
 			"sentenceIndex": 4,
-			"atSeconds": 42.5
+			"atSeconds": 42.2
 		},
 		{
 			"sentenceIndex": 5,
@@ -1406,31 +1406,31 @@
 		},
 		{
 			"sentenceIndex": 3,
-			"atSeconds": 39.7
+			"atSeconds": 34.7
 		},
 		{
 			"sentenceIndex": 4,
-			"atSeconds": 48.8
+			"atSeconds": 44.8
 		},
 		{
 			"sentenceIndex": 5,
-			"atSeconds": 60.9
+			"atSeconds": 56.3
 		},
 		{
 			"sentenceIndex": 6,
-			"atSeconds": 70.3
+			"atSeconds": 65.5
 		},
 		{
 			"sentenceIndex": 7,
-			"atSeconds": 84
+			"atSeconds": 78.7
 		},
 		{
 			"sentenceIndex": 8,
-			"atSeconds": 93.1
+			"atSeconds": 89.3
 		},
 		{
 			"sentenceIndex": 9,
-			"atSeconds": 105.1
+			"atSeconds": 100.4
 		}
 	],
 	"080_RP_Unit 5.5_slow.mp3": [
@@ -1834,35 +1834,35 @@
 		},
 		{
 			"sentenceIndex": 7,
-			"atSeconds": 76
+			"atSeconds": 71.3
 		},
 		{
 			"sentenceIndex": 8,
-			"atSeconds": 88.2
+			"atSeconds": 83.7
 		},
 		{
 			"sentenceIndex": 9,
-			"atSeconds": 98.3
+			"atSeconds": 92.5
 		},
 		{
 			"sentenceIndex": 10,
-			"atSeconds": 112.7
+			"atSeconds": 107.4
 		},
 		{
 			"sentenceIndex": 11,
-			"atSeconds": 124
+			"atSeconds": 120.4
 		},
 		{
 			"sentenceIndex": 12,
-			"atSeconds": 134.1
+			"atSeconds": 127.7
 		},
 		{
 			"sentenceIndex": 13,
-			"atSeconds": 151.2
+			"atSeconds": 144.8
 		},
 		{
 			"sentenceIndex": 14,
-			"atSeconds": 169.1
+			"atSeconds": 162.1
 		}
 	],
 	"096_RP_Unit 6.7_slow.mp3": [
@@ -1971,84 +1971,84 @@
 	],
 	"100_RP_Unit 6.9_slow.mp3": [
 		{
-			"atSeconds": 0.2,
-			"sentenceIndex": 0
+			"sentenceIndex": 0,
+			"atSeconds": 0
 		},
 		{
-			"atSeconds": 11.5,
-			"sentenceIndex": 1
+			"sentenceIndex": 1,
+			"atSeconds": 11.3
 		},
 		{
-			"atSeconds": 23.1,
-			"sentenceIndex": 2
+			"sentenceIndex": 2,
+			"atSeconds": 22.9
 		},
 		{
-			"atSeconds": 34.5,
-			"sentenceIndex": 3
+			"sentenceIndex": 3,
+			"atSeconds": 34.3
 		},
 		{
-			"atSeconds": 43.5,
-			"sentenceIndex": 4
+			"sentenceIndex": 4,
+			"atSeconds": 43.3
 		},
 		{
-			"atSeconds": 62.4,
-			"sentenceIndex": 5
+			"sentenceIndex": 5,
+			"atSeconds": 62.2
 		},
 		{
-			"atSeconds": 80.9,
-			"sentenceIndex": 6
+			"sentenceIndex": 6,
+			"atSeconds": 80.7
 		},
 		{
-			"atSeconds": 96.4,
-			"sentenceIndex": 7
+			"sentenceIndex": 7,
+			"atSeconds": 96.2
 		},
 		{
-			"atSeconds": 107.7,
-			"sentenceIndex": 8
+			"sentenceIndex": 8,
+			"atSeconds": 107.5
 		},
 		{
-			"atSeconds": 125.4,
-			"sentenceIndex": 9
+			"sentenceIndex": 9,
+			"atSeconds": 125.3
 		},
 		{
-			"atSeconds": 142.3,
-			"sentenceIndex": 10
+			"sentenceIndex": 10,
+			"atSeconds": 142.1
 		},
 		{
-			"atSeconds": 154.7,
-			"sentenceIndex": 11
+			"sentenceIndex": 11,
+			"atSeconds": 154.5
 		},
 		{
-			"atSeconds": 165.2,
-			"sentenceIndex": 12
+			"sentenceIndex": 12,
+			"atSeconds": 165
 		},
 		{
-			"atSeconds": 183.8,
-			"sentenceIndex": 13
+			"sentenceIndex": 13,
+			"atSeconds": 183.6
 		},
 		{
-			"atSeconds": 201.5,
-			"sentenceIndex": 14
+			"sentenceIndex": 14,
+			"atSeconds": 201.3
 		},
 		{
-			"atSeconds": 212.9,
-			"sentenceIndex": 15
+			"sentenceIndex": 15,
+			"atSeconds": 212.9
 		},
 		{
-			"atSeconds": 222.2,
-			"sentenceIndex": 16
+			"sentenceIndex": 16,
+			"atSeconds": 222.4
 		},
 		{
-			"atSeconds": 239.5,
-			"sentenceIndex": 17
+			"sentenceIndex": 17,
+			"atSeconds": 239.7
 		},
 		{
-			"atSeconds": 255.6,
-			"sentenceIndex": 18
+			"sentenceIndex": 18,
+			"atSeconds": 255.7
 		},
 		{
-			"atSeconds": 269,
-			"sentenceIndex": 19
+			"sentenceIndex": 19,
+			"atSeconds": 269
 		}
 	],
 	"102_RP_Unit 7.1_slow.mp3": [
@@ -2628,7 +2628,7 @@
 		},
 		{
 			"sentenceIndex": 4,
-			"atSeconds": 78.9
+			"atSeconds": 71.9
 		},
 		{
 			"sentenceIndex": 5,
@@ -2694,7 +2694,7 @@
 		},
 		{
 			"sentenceIndex": 10,
-			"atSeconds": 162.8
+			"atSeconds": 162.3
 		},
 		{
 			"sentenceIndex": 11,
@@ -3324,23 +3324,23 @@
 		},
 		{
 			"sentenceIndex": 5,
-			"atSeconds": 56.8
+			"atSeconds": 61.5
 		},
 		{
 			"sentenceIndex": 6,
-			"atSeconds": 67.9
+			"atSeconds": 74.3
 		},
 		{
 			"sentenceIndex": 7,
-			"atSeconds": 82.3
+			"atSeconds": 86.3
 		},
 		{
 			"sentenceIndex": 8,
-			"atSeconds": 92.1
+			"atSeconds": 97.9
 		},
 		{
 			"sentenceIndex": 9,
-			"atSeconds": 104.6
+			"atSeconds": 109.2
 		}
 	],
 	"154_RP_Unit 10.6_slow.mp3": [
@@ -3571,6 +3571,48 @@
 		{
 			"sentenceIndex": 9,
 			"atSeconds": 115
+		}
+	],
+	"164_RP_Unit 11.4_slow.mp3": [
+		{
+			"sentenceIndex": 0,
+			"atSeconds": 0
+		},
+		{
+			"sentenceIndex": 1,
+			"atSeconds": 18.5
+		},
+		{
+			"sentenceIndex": 2,
+			"atSeconds": 30.6
+		},
+		{
+			"sentenceIndex": 3,
+			"atSeconds": 41.7
+		},
+		{
+			"sentenceIndex": 4,
+			"atSeconds": 50.3
+		},
+		{
+			"sentenceIndex": 5,
+			"atSeconds": 62.7
+		},
+		{
+			"sentenceIndex": 6,
+			"atSeconds": 69.7
+		},
+		{
+			"sentenceIndex": 7,
+			"atSeconds": 82.9
+		},
+		{
+			"sentenceIndex": 8,
+			"atSeconds": 92.5
+		},
+		{
+			"sentenceIndex": 9,
+			"atSeconds": 105.9
 		}
 	],
 	"166_RP_Unit 11.5_slow.mp3": [
@@ -3886,47 +3928,47 @@
 		},
 		{
 			"sentenceIndex": 4,
-			"atSeconds": 51.7
+			"atSeconds": 54.9
 		},
 		{
 			"sentenceIndex": 5,
-			"atSeconds": 63.9
+			"atSeconds": 67.1
 		},
 		{
 			"sentenceIndex": 6,
-			"atSeconds": 71.8
+			"atSeconds": 76.6
 		},
 		{
 			"sentenceIndex": 7,
-			"atSeconds": 81.1
+			"atSeconds": 83.4
 		},
 		{
 			"sentenceIndex": 8,
-			"atSeconds": 88.5
+			"atSeconds": 90.9
 		},
 		{
 			"sentenceIndex": 9,
-			"atSeconds": 93.8
+			"atSeconds": 96.7
 		},
 		{
 			"sentenceIndex": 10,
-			"atSeconds": 106.9
+			"atSeconds": 110.6
 		},
 		{
 			"sentenceIndex": 11,
-			"atSeconds": 121.6
+			"atSeconds": 125.3
 		},
 		{
 			"sentenceIndex": 12,
-			"atSeconds": 130.7
+			"atSeconds": 136.1
 		},
 		{
 			"sentenceIndex": 13,
-			"atSeconds": 141.8
+			"atSeconds": 144.3
 		},
 		{
 			"sentenceIndex": 14,
-			"atSeconds": 150.5
+			"atSeconds": 153.1
 		}
 	],
 	"182_RP_Unit 12.7_slow.mp3": [
@@ -4935,6 +4977,48 @@
 		{
 			"sentenceIndex": 9,
 			"atSeconds": 118.7
+		}
+	],
+	"230_RP_Unit 16.5_slow.mp3": [
+		{
+			"sentenceIndex": 0,
+			"atSeconds": 0
+		},
+		{
+			"sentenceIndex": 1,
+			"atSeconds": 18.6
+		},
+		{
+			"sentenceIndex": 2,
+			"atSeconds": 31.1
+		},
+		{
+			"sentenceIndex": 3,
+			"atSeconds": 49.7
+		},
+		{
+			"sentenceIndex": 4,
+			"atSeconds": 62.8
+		},
+		{
+			"sentenceIndex": 5,
+			"atSeconds": 86.8
+		},
+		{
+			"sentenceIndex": 6,
+			"atSeconds": 103
+		},
+		{
+			"sentenceIndex": 7,
+			"atSeconds": 121.2
+		},
+		{
+			"sentenceIndex": 8,
+			"atSeconds": 133.1
+		},
+		{
+			"sentenceIndex": 9,
+			"atSeconds": 153.9
 		}
 	],
 	"232_RP_Unit 16.6_slow.mp3": [
