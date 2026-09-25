@@ -172,20 +172,6 @@
 		});
 	}
 
-	async function deletePin(sentence: TranscriptSentence) {
-		if (!window.confirm(`「${sentence.text}」のピンを削除しますか？`)) return;
-		await run('ピンを削除中…', async () => {
-			const response = await fetch('/api/pins', {
-				method: 'DELETE',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ filename: track.filename, sentenceIndex: sentence.index })
-			});
-			if (!response.ok) throw new Error();
-			track.pins = ((await response.json()) as { pins: AudioPin[] }).pins;
-			return `文${sentence.index + 1}: 削除しました。`;
-		});
-	}
-
 	async function run(progress: string, operation: () => Promise<string>) {
 		if (busy) return;
 		busy = true;
@@ -233,7 +219,7 @@
 			</div>
 			<div class="sentence-editor">
 				<button type="button" disabled={busy} onclick={() => saveCurrentPosition(sentence.index)}>
-					{busy ? '保存中…' : pin ? '現在位置で更新' : '現在位置を保存'}
+					{pin ? '現在位置で更新' : '現在位置を保存'}
 				</button>
 				<label>
 					<span class="visually-hidden">{sentence.text}の秒数</span>
@@ -254,7 +240,6 @@
 						aria-disabled={busy || findAdjacentPinPosition(standardPositions, pin.atSeconds, 'next') === undefined}
 						onclick={() => moveToStandard(pin, 'next')}
 					>次の規定位置</button>
-					<button class="delete-pin" type="button" disabled={busy} onclick={() => deletePin(sentence)}>削除</button>
 				{/if}
 			</div>
 		</div>
@@ -278,7 +263,6 @@
 	.sentence-editor button { min-height: 30px; padding: 0 8px; border: 1px solid #999; background: #fff; color: #222; font: inherit; font-size: 0.7rem; cursor: pointer; }
 	.sentence-editor button:hover { border-color: #111; }
 	.sentence-editor button:disabled { color: #777; cursor: default; }
-	.sentence-editor .delete-pin { border-color: #c8a3a3; color: #9d2222; }
 	.seconds-unit { color: #666; font-size: 0.7rem; }
 	.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
