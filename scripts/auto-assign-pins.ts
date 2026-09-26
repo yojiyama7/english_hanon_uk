@@ -13,19 +13,29 @@ const audioDirectory = resolve(root, 'english_hanon_mp3');
 const transcriptPath = resolve(audioDirectory, 'transcript.txt');
 const pinsPath = resolve(root, 'src/lib/audio-pins.json');
 const temporaryPinsPath = `${pinsPath}.tmp`;
-const slowFilenamePattern = /^\d{3}_RP_Unit (\d+)\.(\d+)_slow\.mp3$/;
+const trackKinds = ['slow', 'natural'] as const;
+type TrackKind = (typeof trackKinds)[number];
 
 type AudioStreamInfo = { sampleRate: number; channels: number };
 type Failure = { lesson: string; filename: string; reason: string };
 
+// These two short prompts have valid onsets, but MP3 pre-echo leaves more than 10% of their
+// one-second lead windows above the weak-sound threshold. Their positions still use the same
+// onset-minus-0.4-seconds, rounded-down rule as every detected standard position.
+const additionalStandardPositions: Record<string, number[]> = {
+	'099_RP_Unit 6.8_natural.mp3': [72.3, 74]
+};
+
 function usageError(message: string): never {
-	throw new Error(`${message}\nUsage: npm run pins:auto-assign-slow -- [--write]`);
+	throw new Error(`${message}\nUsage: npm run pins:auto-assign-{slow|natural} -- [--write]`);
 }
 
-function parseArguments(arguments_: string[]): { write: boolean } {
-	const unknown = arguments_.filter((argument) => argument !== '--write');
+function parseArguments(arguments_: string[]): { kind: TrackKind; write: boolean } {
+	const kind = arguments_[0];
+	if (!trackKinds.includes(kind as TrackKind)) usageError(`Unknown track kind: ${kind ?? '(none)'}`);
+	const unknown = arguments_.slice(1).filter((argument) => argument !== '--write');
 	if (unknown.length) usageError(`Unknown option: ${unknown[0]}`);
-	return { write: arguments_.includes('--write') };
+	return { kind: kind as TrackKind, write: arguments_.includes('--write') };
 }
 
 async function audioStreamInfo(path: string): Promise<AudioStreamInfo> {
@@ -94,15 +104,16 @@ async function decodeChannels(path: string, channelCount: number): Promise<Float
 }
 
 async function main() {
-	const { write } = parseArguments(process.argv.slice(2));
+	const { kind, write } = parseArguments(process.argv.slice(2));
+	const filenamePattern = new RegExp(`^\\d{3}_RP_Unit (\\d+)\\.(\\d+)_${kind}\\.mp3$`);
 	const filenames = (await readdir(audioDirectory))
-		.filter((filename) => slowFilenamePattern.test(filename))
+		.filter((filename) => filenamePattern.test(filename))
 		.sort();
-	if (filenames.length === 0) throw new Error('Slow音源が見つかりませんでした。');
+	if (filenames.length === 0) throw new Error(`${kind}音源が見つかりませんでした。`);
 
 	const lessonsByFilename = new Map(
 		filenames.map((filename) => {
-			const match = filename.match(slowFilenamePattern)!;
+			const match = filename.match(filenamePattern)!;
 			return [filename, lessonId(Number(match[1]), Number(match[2]))] as const;
 		})
 	);
@@ -133,9 +144,12 @@ async function main() {
 			const path = resolve(audioDirectory, filename);
 			const info = await audioStreamInfo(path);
 			const channels = await decodeChannels(path, info.channels);
-			const standardPositions = findStandardPinPositions(
-				createAudioEnvelope(channels, info.sampleRate)
-			);
+			const standardPositions = [
+				...new Set([
+					...findStandardPinPositions(createAudioEnvelope(channels, info.sampleRate)),
+					...(additionalStandardPositions[filename] ?? [])
+				])
+			].sort((a, b) => a - b);
 			const result = assignMissingPins(sentences, standardPositions, allPins[filename] ?? []);
 			if (!result.ok) {
 				throw new Error(
