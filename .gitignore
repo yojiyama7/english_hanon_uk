@@ -24,3 +24,17 @@ vite.config.ts.timestamp-*
 
 # Local audio library
 /english_hanon_mp3/
+
+# Copyrighted local materials must never be committed (at any location).
+*.[mM][pP]3
+*.[wW][aA][vV]
+*.[mM]4[aA]
+*.[aA][aA][cC]
+*.[fF][lL][aA][cC]
+*.[oO][gG][gG]
+*.[oO][pP][uU][sS]
+*.[wW][mM][aA]
+*.[tT][xX][tT]
+*.srt
+*.vtt
+/local-materials/

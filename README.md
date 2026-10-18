@@ -46,41 +46,34 @@ npm run pins:auto-assign-natural
 npm run pins:auto-assign-natural -- --write
 ```
 
-## Creating a project
+## ローカルで起動
 
-If you're seeing this, you've probably already done this step. Congrats!
-
-```sh
-# create a new project
-npx sv create my-app
-```
-
-To recreate this project with the same configuration:
+Node.js 24 以降で実行します。
 
 ```sh
-# recreate this project
-npx sv@0.17.0 create --template minimal --types ts --install npm .
-```
-
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
+npm ci
 npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
 ```
 
-## Building
+表示された localhost の URL を開き、教材フォルダを選択してください。音声と文字起こしは端末内に保存されます。localhost と Pages の保存領域は別なので、それぞれで取り込みが必要です。
 
-To create a production version of your app:
+## GitHub Pages へ公開
+
+1. 教材を含めず、このリポジトリを GitHub へ push します。
+2. Settings → Pages → Build and deployment → Source で **GitHub Actions** を選びます。
+3. `main` または `master` への push、または Actions の `Deploy GitHub Pages` → `Run workflow` で公開します。
+
+型チェック・テスト・本番検証後に `build/` だけを公開します。公開先のサブパスは Pages の設定から自動取得します。サーバー処理は不要です。
+
+教材は `english_hanon_mp3/` または `local-materials/` 内に置き、文字起こしは `transcript.txt` として管理してください。音声・TXT・字幕ファイルは Git の除外対象です。教材をソースへ貼り付けたり、`static/` に置いたりしないでください。ビルド前に Git 追跡対象と静的アセットに教材ファイルがないか検査します（`robots.txt` は除外）。
+
+公開用ビルドの確認:
 
 ```sh
-npm run build
+npm run verify:production
+npm run preview
 ```
 
-You can preview the production build with `npm run preview`.
+サブパスの確認には `BASE_PATH=/english_hanon_sound_player npm run verify:production` を使い、同じ環境変数で `npm run preview` を実行します。`build/index.html` の直接起動ではなく HTTP サーバー経由で利用してください。
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+静的配信の設定は [SvelteKit 公式ドキュメント](https://svelte.dev/docs/kit/adapter-static) に準拠しています。

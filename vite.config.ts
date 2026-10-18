@@ -1,6 +1,11 @@
-import adapter from '@sveltejs/adapter-auto';
+import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig, searchForWorkspaceRoot } from 'vite';
+
+const basePath = process.env.BASE_PATH ?? '';
+if (basePath !== '' && (!basePath.startsWith('/') || basePath.endsWith('/'))) {
+	throw new Error('BASE_PATH must start with / and have no trailing slash.');
+}
 
 export default defineConfig(async ({ command }) => ({
 	server: {
@@ -19,9 +24,7 @@ export default defineConfig(async ({ command }) => ({
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
 
-			// adapter-auto only supports some environments, see https://svelte.dev/docs/kit/adapter-auto for a list.
-			// If your environment is not supported, or you settled on a specific environment, switch out the adapter.
-			// See https://svelte.dev/docs/kit/adapters for more information about adapters.
+			paths: { base: basePath as '' | `/${string}` },
 			adapter: adapter()
 		})
 	]
