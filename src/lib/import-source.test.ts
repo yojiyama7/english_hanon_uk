@@ -29,6 +29,7 @@ test('selects recursive audio and only a root-level transcript from fallback fil
 
 	assert.deepEqual(selectFallbackImportFiles(files), {
 		audioFiles: [files[0], files[1]],
+		zipFiles: [],
 		transcriptFile: files[2]
 	});
 });
@@ -39,5 +40,13 @@ test('allows an import without a transcript', () => {
 		{ name: 'notes.txt', webkitRelativePath: 'English Hanon/notes.txt' }
 	];
 
-	assert.deepEqual(selectFallbackImportFiles(files), { audioFiles: [files[0]] });
+	assert.deepEqual(selectFallbackImportFiles(files), { audioFiles: [files[0]], zipFiles: [] });
+});
+
+test('selects ZIP files recursively and case-insensitively', () => {
+	const files = [
+		{ name: 'Unit 0-2.zip', webkitRelativePath: 'english_hanon_audio_zips/Unit 0-2.zip' },
+		{ name: 'Unit 3-5.ZIP', webkitRelativePath: 'english_hanon_audio_zips/nested/Unit 3-5.ZIP' }
+	];
+	assert.deepEqual(selectFallbackImportFiles(files), { audioFiles: [], zipFiles: files });
 });

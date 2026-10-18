@@ -18,9 +18,11 @@
 	} from '$lib/storage-capacity';
 	import {
 		isAudioFilename,
+		isZipFilename,
 		isTranscriptFilename,
 		selectFallbackImportFiles
 	} from '$lib/import-source';
+	import { extractAudioZips } from '$lib/zip-import';
 
 	type Lesson = {
 		title: string;
@@ -41,6 +43,7 @@
 
 	type CollectedImportFiles = {
 		audioFiles: File[];
+		zipFiles: File[];
 		transcriptFile?: File;
 	};
 
@@ -61,6 +64,7 @@
 		'starting' | 'choose' | 'scanning' | 'review' | 'importing' | 'ready' | 'error'
 	>('starting');
 	let errorMessage = $state('');
+	let scanMessage = $state('');
 	let fallbackInput: HTMLInputElement;
 	let currentManifest = $state<LocalLibraryManifest | null>(null);
 	let pendingImport = $state<ImportSource | null>(null);
@@ -296,18 +300,22 @@
 		includeTranscript = true
 	): Promise<CollectedImportFiles> {
 		const audioFiles: File[] = [];
+		const zipFiles: File[] = [];
 		let transcriptFile: File | undefined;
 		for await (const entry of handle.values()) {
 			if (entry.kind === 'file' && isAudioFilename(entry.name)) {
 				audioFiles.push(await (entry as FileSystemFileHandle).getFile());
+			} else if (entry.kind === 'file' && isZipFilename(entry.name)) {
+				zipFiles.push(await (entry as FileSystemFileHandle).getFile());
 			} else if (entry.kind === 'file' && includeTranscript && isTranscriptFilename(entry.name)) {
 				transcriptFile = await (entry as FileSystemFileHandle).getFile();
 			} else if (entry.kind === 'directory') {
 				const nested = await collectImportFiles(entry as PermissionCapableDirectoryHandle, false);
 				audioFiles.push(...nested.audioFiles);
+				zipFiles.push(...nested.zipFiles);
 			}
 		}
-		return { audioFiles, transcriptFile };
+		return { audioFiles, zipFiles, transcriptFile };
 	}
 
 	async function decodeUtf8(file: File): Promise<string> {
@@ -321,9 +329,14 @@
 	async function prepareImport(source: CollectedImportFiles, selectedFolderName: string) {
 		phase = 'scanning';
 		errorMessage = '';
+		scanMessage = '教材を確認しています。';
+		pendingImport = null;
+		importPreview = null;
 		try {
+			const extractedFiles = await extractAudioZips(source.zipFiles, expectedAudioFilenames,
+				(message) => { scanMessage = message; });
 			const audioFilesByName = new Map<string, File>();
-			for (const file of source.audioFiles) {
+			for (const file of [...source.audioFiles, ...extractedFiles]) {
 				if (audioFilesByName.has(file.name)) {
 					throw new Error(`同名の音声ファイルが複数あります: ${file.name}`);
 				}
@@ -416,6 +429,8 @@
 
 		try {
 			const handle = (await picker.call(window, { mode: 'read' })) as PermissionCapableDirectoryHandle;
+			phase = 'scanning';
+			scanMessage = '教材フォルダを確認しています。';
 			await prepareImport(await collectImportFiles(handle), handle.name);
 		} catch (error) {
 			if (error instanceof DOMException && error.name === 'AbortError') return;
@@ -655,7 +670,7 @@
 				<h2 id="folder-title">保存済みの教材を確認中…</h2>
 			{:else if phase === 'scanning'}
 				<h2 id="folder-title">教材を確認しています…</h2>
-				<p class="dialog-copy">まだ端末内へのコピーは開始していません。</p>
+				<p class="dialog-copy" aria-live="polite">{scanMessage}</p>
 			{:else if phase === 'review' && importPreview}
 				<h2 id="folder-title">端末に保存しますか？</h2>
 				<p class="folder-name">{folderName}</p>
@@ -690,7 +705,7 @@
 				<p class="dialog-copy">この画面を閉じずにお待ちください。</p>
 			{:else}
 				<h2 id="folder-title">教材フォルダを選択してください</h2>
-				<p class="dialog-copy">MP3と、フォルダ直下の transcript.txt を選択できます。文字起こしの見出しは「[Unit 0.1]」形式です。容量を確認したあと、許可した場合だけ端末内に保存します。</p>
+				<p class="dialog-copy">english_hanon_audio_zips フォルダを選択してください。中のZIPを自動で解凍し、容量確認後に音声を端末内へ保存します。解凍済みMP3にも対応しています。文字起こしを使う場合はフォルダ直下に transcript.txt を置いてください。外部には送信されません。</p>
 				{#if errorMessage}<p class="error-message">{errorMessage}</p>{/if}
 				<div class="dialog-actions">
 					<button class="primary-action" type="button" onclick={chooseDirectory}>フォルダを選択</button>
