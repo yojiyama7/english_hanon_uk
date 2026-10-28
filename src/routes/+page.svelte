@@ -215,6 +215,14 @@
 		}
 	}
 
+	function closeAllOnEscape(event: KeyboardEvent) {
+		if (event.key !== 'Escape' || phase !== 'ready') return;
+		for (const unit of document.querySelectorAll<HTMLDetailsElement>('details.unit[open]')) {
+			unit.open = false;
+		}
+		transcriptOpenStates = {};
+	}
+
 	function preventSpaceDefault(event: KeyboardEvent) {
 		if (event.code !== 'Space') return;
 		event.preventDefault();
@@ -486,6 +494,7 @@
 
 <svelte:window
 	onkeydowncapture={toggleLastUsedAudio}
+	onkeydown={closeAllOnEscape}
 	onkeyupcapture={preventSpaceDefault}
 />
 
