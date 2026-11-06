@@ -6560,11 +6560,11 @@
 		},
 		{
 			"sentenceIndex": 2,
-			"atSeconds": 29
+			"atSeconds": 28.9
 		},
 		{
 			"sentenceIndex": 3,
-			"atSeconds": 41.7
+			"atSeconds": 45.4
 		},
 		{
 			"sentenceIndex": 4,
@@ -6576,11 +6576,11 @@
 		},
 		{
 			"sentenceIndex": 6,
-			"atSeconds": 79.3
+			"atSeconds": 83.6
 		},
 		{
 			"sentenceIndex": 7,
-			"atSeconds": 97.4
+			"atSeconds": 100.7
 		},
 		{
 			"sentenceIndex": 8,
@@ -6588,27 +6588,47 @@
 		},
 		{
 			"sentenceIndex": 9,
-			"atSeconds": 118.4
+			"atSeconds": 124.1
 		},
 		{
 			"sentenceIndex": 10,
-			"atSeconds": 140
+			"atSeconds": 144.6
 		},
 		{
 			"sentenceIndex": 11,
-			"atSeconds": 159.8
+			"atSeconds": 164.1
 		},
 		{
 			"sentenceIndex": 12,
-			"atSeconds": 170.5
+			"atSeconds": 176.9
 		},
 		{
 			"sentenceIndex": 13,
-			"atSeconds": 184.2
+			"atSeconds": 189.1
 		},
 		{
 			"sentenceIndex": 14,
-			"atSeconds": 202.1
+			"atSeconds": 206.4
+		},
+		{
+			"sentenceIndex": 15,
+			"atSeconds": 223.7
+		},
+		{
+			"sentenceIndex": 16,
+			"atSeconds": 235.2
+		},
+		{
+			"sentenceIndex": 17,
+			"atSeconds": 245.5
+		},
+		{
+			"sentenceIndex": 18,
+			"atSeconds": 259.3
+		},
+		{
+			"sentenceIndex": 19,
+			"atSeconds": 274.4
 		}
 	],
 	"157_RP_Unit 10.7_natural.mp3": [
@@ -6626,7 +6646,7 @@
 		},
 		{
 			"sentenceIndex": 3,
-			"atSeconds": 36.1
+			"atSeconds": 39.4
 		},
 		{
 			"sentenceIndex": 4,
@@ -6638,11 +6658,11 @@
 		},
 		{
 			"sentenceIndex": 6,
-			"atSeconds": 69.3
+			"atSeconds": 73
 		},
 		{
 			"sentenceIndex": 7,
-			"atSeconds": 84.5
+			"atSeconds": 87.2
 		},
 		{
 			"sentenceIndex": 8,
@@ -6650,27 +6670,47 @@
 		},
 		{
 			"sentenceIndex": 9,
-			"atSeconds": 102.1
+			"atSeconds": 106.5
 		},
 		{
 			"sentenceIndex": 10,
-			"atSeconds": 118.4
+			"atSeconds": 122.5
 		},
 		{
 			"sentenceIndex": 11,
-			"atSeconds": 135.4
+			"atSeconds": 138.8
 		},
 		{
 			"sentenceIndex": 12,
-			"atSeconds": 144
+			"atSeconds": 149.3
 		},
 		{
 			"sentenceIndex": 13,
-			"atSeconds": 155.6
+			"atSeconds": 159.6
 		},
 		{
 			"sentenceIndex": 14,
-			"atSeconds": 170
+			"atSeconds": 173.7
+		},
+		{
+			"sentenceIndex": 15,
+			"atSeconds": 188.2
+		},
+		{
+			"sentenceIndex": 16,
+			"atSeconds": 198.3
+		},
+		{
+			"sentenceIndex": 17,
+			"atSeconds": 206.6
+		},
+		{
+			"sentenceIndex": 18,
+			"atSeconds": 219.6
+		},
+		{
+			"sentenceIndex": 19,
+			"atSeconds": 233.1
 		}
 	],
 	"158_RP_Unit 11.1_slow.mp3": [
