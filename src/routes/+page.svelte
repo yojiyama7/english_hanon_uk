@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount, type Component } from 'svelte';
+	import { onDestroy, onMount, tick, type Component } from 'svelte';
 	import { audioCatalog, type AudioKind, type AudioPin } from '$lib/audio-catalog';
 	import {
 		deleteLibrary,
@@ -23,6 +23,7 @@
 		selectFallbackImportFiles
 	} from '$lib/import-source';
 	import { extractAudioZips } from '$lib/zip-import';
+	import { parseSectionParam, sectionParamName } from '$lib/section-param';
 
 	type Lesson = {
 		title: string;
@@ -473,6 +474,23 @@
 		}
 	}
 
+	async function openSectionFromUrl() {
+		const target = parseSectionParam(new URLSearchParams(window.location.search).get(sectionParamName));
+		if (!target) return;
+		const lesson = units
+			.find((group) => group.unit === target.unit)
+			?.lessons.find((candidate) => candidate.section === target.section);
+		if (!lesson) return;
+		const key = lessonId(lesson.unit, lesson.section);
+		if (lesson.transcript) transcriptOpenStates[key] = true;
+		await tick();
+		const row = document.querySelector<HTMLElement>(`.lesson-row[data-lesson-id="${key}"]`);
+		const unitElement = row?.closest<HTMLDetailsElement>('details.unit');
+		if (!row || !unitElement) return;
+		unitElement.open = true;
+		row.scrollIntoView({ block: 'start' });
+	}
+
 	onMount(async () => {
 		try {
 			if (!navigator.storage?.getDirectory) {
@@ -480,8 +498,10 @@
 			}
 			await loadDevelopmentPins();
 			const manifest = await getLibraryManifest();
-			if (manifest) await loadStoredLibrary(manifest);
-			else phase = 'choose';
+			if (manifest) {
+				await loadStoredLibrary(manifest);
+				await openSectionFromUrl();
+			} else phase = 'choose';
 		} catch {
 			errorMessage = '保存済みの教材を読み込めませんでした。再度フォルダを選択してください。';
 			currentManifest = null;
@@ -559,7 +579,7 @@
 						{#each group.lessons as lesson}
 							{@const activeTrack = selectedTrack(lesson)}
 							{@const transcriptKey = lessonId(lesson.unit, lesson.section)}
-							<div class="lesson-row">
+							<div class="lesson-row" data-lesson-id={transcriptKey}>
 								<div
 									class:single-track={group.unit === 0}
 									class:has-transcript={lesson.transcript}
